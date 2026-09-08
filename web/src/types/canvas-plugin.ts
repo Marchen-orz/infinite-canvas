@@ -5,6 +5,7 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasConnection, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { CanvasResourceKind } from "@/lib/canvas/canvas-resource-references";
 import type { VideoModelPlugin } from "@/services/api/model-plugins/types";
+import type { MediaEditorRequest } from "@/services/media-editor";
 
 // Resource emitted when a plugin node is consumed as an upstream input.
 export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string };
@@ -19,6 +20,22 @@ export type GenerateTextOptions = { signal?: AbortSignal; model?: string; system
 export type GenerateTextResult = { text: string };
 export type PluginModelCapability = "image" | "video" | "text" | "audio";
 export type ModelOption = { value: string; label: string };
+
+// Browser-local media written by a plugin. The host persists it with the same storage layer as uploaded and generated nodes.
+export type CanvasPluginMedia = {
+    edit: (request: MediaEditorRequest) => Promise<Blob>;
+};
+
+export type CanvasPluginStoredMedia = {
+    content: string;
+    storageKey: string;
+    bytes: number;
+    mimeType: string;
+    naturalWidth?: number;
+    naturalHeight?: number;
+    durationMs?: number;
+    status: "success";
+};
 
 export type CanvasPluginAi = {
     generateImage: (prompt: string, options?: GenerateImageOptions) => Promise<GenerateImageResult>;
@@ -70,6 +87,9 @@ export type CanvasNodeContext = {
     // Opens or closes the custom panel below this node; the definition must provide a Panel.
     openPanel: () => void;
     closePanel: () => void;
+    // Persists a browser-generated Blob and returns metadata ready for an audio/video canvas node.
+    storeMedia: (blob: Blob, kind: "video" | "audio") => Promise<CanvasPluginStoredMedia>;
+    media: CanvasPluginMedia;
     // Plugin-private persistence isolated by namespace.
     storage: PluginStorage;
 };
@@ -95,6 +115,8 @@ export type CanvasPluginHost = {
     // Opens or closes the custom panel below a specified node.
     openPanel: (nodeId: string) => void;
     closePanel: () => void;
+    storeMedia: (blob: Blob, kind: "video" | "audio") => Promise<CanvasPluginStoredMedia>;
+    media: CanvasPluginMedia;
 };
 
 // Configuration for reusing the host's built-in generation panel; see SDK CanvasBuiltinPanelConfig.

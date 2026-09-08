@@ -2,5 +2,6 @@
   "/plugins/node-duration.js",
   "/plugins/material-info.js",
   "/plugins/comp-share-minimax-h3.js",
-  "/plugins/autodl-comfyui.js"
+  "/plugins/autodl-comfyui.js",
+  "/plugins/media-editor.js"
 ]

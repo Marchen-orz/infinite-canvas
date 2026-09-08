@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
 import { imageToDataUrl } from "@/services/image-storage";
+import { uploadMediaFile } from "@/services/file-storage";
+import { audioMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { modelOptionLabel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
@@ -110,6 +112,12 @@ export function usePluginHost(params: PluginHostParams) {
             ai: pluginAi,
             openPanel: (nodeId) => setDialogNodeId(nodeId),
             closePanel: () => setDialogNodeId(null),
+            media: { edit: async (request) => (await import("@/services/media-editor")).editMedia(request) },
+            storeMedia: async (blob, kind) => {
+                const file = await uploadMediaFile(blob, kind);
+                const metadata = kind === "video" ? videoMetadata(file) : audioMetadata(file);
+                return { content: metadata.content || "", storageKey: metadata.storageKey || "", bytes: metadata.bytes || 0, mimeType: metadata.mimeType || blob.type, naturalWidth: metadata.naturalWidth, naturalHeight: metadata.naturalHeight, durationMs: metadata.durationMs, status: "success" };
+            },
         }),
         [applyAgentOps, pluginAi],
     );

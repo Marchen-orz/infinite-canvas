@@ -25,6 +25,8 @@ export function buildNodeContext(host: CanvasPluginHost, node: CanvasNodeData, t
         ai: host.ai,
         openPanel: () => host.openPanel(node.id),
         closePanel: () => host.closePanel(),
+        storeMedia: (blob, kind) => host.storeMedia(blob, kind),
+        media: host.media,
         storage,
     };
 }

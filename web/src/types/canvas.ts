@@ -92,6 +92,7 @@ export type CanvasNodeMetadata = {
     generationDurationMs?: number;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
+    pluginData?: Record<string, unknown>; // Plugin-defined small, JSON-serializable node settings.
 };
 
 export type CanvasNodeData = {
