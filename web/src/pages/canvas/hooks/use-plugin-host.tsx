@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, type Dispatch, type MutableRefObject, 
 import { useTranslation } from "react-i18next";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
-import { imageToDataUrl } from "@/services/image-storage";
+import { imageToDataUrl, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
-import { audioMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
+import { audioMetadata, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { modelOptionLabel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
@@ -31,6 +31,25 @@ type PluginHostParams = {
     setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     applyAgentOps: (ops?: CanvasAgentOp[]) => unknown;
 };
+
+async function cropPluginImage(source: { content?: string; storageKey?: string }, crop: { left: number; top: number; width: number; height: number }) {
+    const src = await imageToDataUrl(source);
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("图片读取失败"));
+        element.src = src;
+    });
+    const left = Math.max(0, Math.min(1, crop.left));
+    const top = Math.max(0, Math.min(1, crop.top));
+    const width = Math.max(0.01, Math.min(1 - left, crop.width));
+    const height = Math.max(0.01, Math.min(1 - top, crop.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * width));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * height));
+    canvas.getContext("2d")?.drawImage(image, Math.round(image.naturalWidth * left), Math.round(image.naturalHeight * top), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("图片裁剪失败"))), "image/png"));
+}
 
 /**
  * Plugin node host capabilities: expose host-side AI generation, canvas access, and panel controls
@@ -112,7 +131,12 @@ export function usePluginHost(params: PluginHostParams) {
             ai: pluginAi,
             openPanel: (nodeId) => setDialogNodeId(nodeId),
             closePanel: () => setDialogNodeId(null),
-            media: { edit: async (request) => (await import("@/services/media-editor")).editMedia(request) },
+            media: { edit: async (request) => (await import("@/services/media-editor")).editMedia(request), resolveImage: (source) => imageToDataUrl(source), cropImage: cropPluginImage },
+            storeImage: async (blob) => {
+                const image = await uploadImage(blob);
+                const metadata = imageMetadata(image);
+                return { content: metadata.content || "", storageKey: metadata.storageKey || "", bytes: metadata.bytes || 0, mimeType: metadata.mimeType || blob.type || "image/png", naturalWidth: metadata.naturalWidth || image.width, naturalHeight: metadata.naturalHeight || image.height, status: "success" };
+            },
             storeMedia: async (blob, kind) => {
                 const file = await uploadMediaFile(blob, kind);
                 const metadata = kind === "video" ? videoMetadata(file) : audioMetadata(file);

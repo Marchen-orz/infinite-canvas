@@ -24,6 +24,18 @@ export type ModelOption = { value: string; label: string };
 // Browser-local media written by a plugin. The host persists it with the same storage layer as uploaded and generated nodes.
 export type CanvasPluginMedia = {
     edit: (request: MediaEditorRequest) => Promise<Blob>;
+    resolveImage: (source: { content?: string; storageKey?: string }) => Promise<string>;
+    cropImage: (source: { content?: string; storageKey?: string }, crop: { left: number; top: number; width: number; height: number }) => Promise<Blob>;
+};
+
+export type CanvasPluginStoredImage = {
+    content: string;
+    storageKey: string;
+    bytes: number;
+    mimeType: string;
+    naturalWidth: number;
+    naturalHeight: number;
+    status: "success";
 };
 
 export type CanvasPluginStoredMedia = {
@@ -89,6 +101,7 @@ export type CanvasNodeContext = {
     closePanel: () => void;
     // Persists a browser-generated Blob and returns metadata ready for an audio/video canvas node.
     storeMedia: (blob: Blob, kind: "video" | "audio") => Promise<CanvasPluginStoredMedia>;
+    storeImage: (blob: Blob) => Promise<CanvasPluginStoredImage>;
     media: CanvasPluginMedia;
     // Plugin-private persistence isolated by namespace.
     storage: PluginStorage;
@@ -116,6 +129,7 @@ export type CanvasPluginHost = {
     openPanel: (nodeId: string) => void;
     closePanel: () => void;
     storeMedia: (blob: Blob, kind: "video" | "audio") => Promise<CanvasPluginStoredMedia>;
+    storeImage: (blob: Blob) => Promise<CanvasPluginStoredImage>;
     media: CanvasPluginMedia;
 };
 

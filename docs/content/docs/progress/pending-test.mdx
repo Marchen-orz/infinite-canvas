@@ -7,6 +7,7 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- Media editor sources and image crop: the media bin should contain only image, audio, and video nodes directly connected into the editor; selecting an image should expose normalized crop controls, exporting should add the crop to the timeline, and right-clicking any bin item should create a corresponding canvas node. Bin typography and row height should stay compact.
 - Media editor visual consistency: the collapsed editor node should fill its complete canvas card, the editing panel should use the same warm-black neutral palette as the dark canvas, and portrait or landscape media should remain contained inside a centered preview monitor no taller than 280 px instead of expanding the whole panel.
 - In-place image and video regeneration: after a successful generation, changing the result node prompt, model, or settings and submitting again—or choosing Regenerate from the node toolbar—should replace that node rather than create another result node. The request must use the result node’s latest prompt and settings while retaining the original generation path’s references.
 - CompShare local media calls: when canvas or locally uploaded reference images, videos, or audio are used, public URLs should be preferred; local Data URLs without a MIME type should be normalized instead of returning `Params [FileName] not available`. Saved version 1.1.0 scripts should migrate to the new template automatically.
