@@ -7,7 +7,7 @@ import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, ty
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
-type ScriptTarget = { name: string; capability: ModelCapability; value: string };
+type ScriptTarget = { id: string; name: string; capability: ModelCapability; value: string };
 
 export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: boolean; channel: ModelChannel | null; onSave: (channel: ModelChannel) => void; onClose: () => void }) {
     const { t } = useTranslation();
@@ -34,14 +34,15 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         patch({ apiFormat, baseUrl });
     };
 
-    const applySelection = (names: string[]) => {
-        const map = new Map(draft.models.map((model) => [model.name, model]));
-        setModels(names.map((name) => map.get(name) || { name, capability: guessCapability(name) }));
+    const applySelection = (ids: string[]) => {
+        const map = new Map(draft.models.map((model) => [model.id, model]));
+        setModels(ids.map((id) => map.get(id) || { id, name: id, capability: guessCapability(id) }));
     };
 
-    const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
-    const setScript = (name: string, script: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
-    const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
+    const setModel = (id: string, value: Partial<ChannelModel>) => setModels(draft.models.map((model) => (model.id === id ? { ...model, ...value } : model)));
+    const setCapability = (id: string, capability: ModelCapability) => setModel(id, { capability });
+    const setScript = (id: string, script: string) => setModel(id, { script: script || undefined });
+    const removeModel = (id: string) => setModels(draft.models.filter((model) => model.id !== id));
 
     const save = () => {
         onSave({ ...draft, name: draft.name.trim() || t("config.channels.unnamed"), models: normalizeChannelModels(draft.models) });
@@ -96,16 +97,21 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
             <div className="space-y-2 rounded-lg border border-stone-200 p-2 dark:border-stone-800">
                 {draft.models.length ? (
                     draft.models.map((model) => (
-                        <div key={model.name} className="flex flex-wrap items-center gap-3 rounded-md px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-900/40">
-                            <span className="min-w-0 flex-1 truncate text-sm" title={model.name}>
-                                {model.name}
-                            </span>
+                        <div key={model.id} className="flex flex-wrap items-center gap-3 rounded-md px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-900/40">
+                            <label className="min-w-[140px] flex-1">
+                                <span className="mb-1 block text-xs text-stone-500">{t("config.channelEditor.modelName")}</span>
+                                <Input size="small" value={model.name} onChange={(event) => setModel(model.id, { name: event.target.value })} />
+                            </label>
+                            <label className="min-w-[180px] flex-1">
+                                <span className="mb-1 block text-xs text-stone-500">{t("config.channelEditor.modelId")}</span>
+                                <Input size="small" value={model.id} onChange={(event) => setModel(model.id, { id: event.target.value })} />
+                            </label>
                             <div className="flex shrink-0 items-center gap-2">
-                                <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
-                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
+                                <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.id, value as ModelCapability)} />
+                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ id: model.id, name: model.name, capability: model.capability, value: model.script || "" })}>
                                     {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
                                 </Button>
-                                <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
+                                <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.id)} />
                             </div>
                         </div>
                     ))
@@ -114,14 +120,14 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 )}
             </div>
 
-            <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.name)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
+            <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.id)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
 
             <ModelScriptEditor
                 open={Boolean(scriptTarget)}
                 capability={scriptTarget?.capability || "text"}
                 modelName={scriptTarget?.name || ""}
                 value={scriptTarget?.value || ""}
-                onSave={(script) => scriptTarget && setScript(scriptTarget.name, script)}
+                onSave={(script) => scriptTarget && setScript(scriptTarget.id, script)}
                 onClose={() => setScriptTarget(null)}
             />
         </Drawer>

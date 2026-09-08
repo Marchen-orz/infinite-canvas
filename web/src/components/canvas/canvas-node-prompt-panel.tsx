@@ -111,7 +111,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                     ) : mode === "video" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
-                            <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[220px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                            <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                         </>
                     ) : mode === "audio" ? (
                         <>
@@ -175,11 +175,16 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         background: node.metadata?.background ?? globalConfig.background ?? defaultConfig.background,
+        negativePrompt: node.metadata?.negativePrompt ?? globalConfig.negativePrompt ?? defaultConfig.negativePrompt,
+        denoise: node.metadata?.denoise ?? globalConfig.denoise ?? defaultConfig.denoise,
+        upscale: node.metadata?.upscale ?? globalConfig.upscale ?? defaultConfig.upscale,
+        upscaleFactor: node.metadata?.upscaleFactor ?? globalConfig.upscaleFactor ?? defaultConfig.upscaleFactor,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
-        videoMode: node.metadata?.videoMode || globalConfig.videoMode || defaultConfig.videoMode,
+        videoUseContextIr: node.metadata?.useContextIr || globalConfig.videoUseContextIr || defaultConfig.videoUseContextIr,
+        videoSkillId: node.metadata?.skillId || globalConfig.videoSkillId || defaultConfig.videoSkillId,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
@@ -192,7 +197,8 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
     if (key === "videoWatermark") return { watermark: value };
-    if (key === "videoMode") return { videoMode: value };
+    if (key === "videoUseContextIr") return { useContextIr: value };
+    if (key === "videoSkillId") return { skillId: value };
     return { [key]: value };
 }
 

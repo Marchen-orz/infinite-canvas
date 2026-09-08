@@ -4,6 +4,7 @@ import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasConnection, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { CanvasResourceKind } from "@/lib/canvas/canvas-resource-references";
+import type { VideoModelPlugin } from "@/services/api/model-plugins/types";
 
 // Resource emitted when a plugin node is consumed as an upstream input.
 export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string };
@@ -37,6 +38,12 @@ export type CanvasNodeToolbarItem = {
     active?: boolean;
     danger?: boolean;
 };
+
+// A plugin UI layer rendered on every canvas node, including built-in node types.
+export type CanvasNodeOverlay = ComponentType<{ ctx: CanvasNodeContext }>;
+
+// Compact metadata rendered below a node title in the canvas side panel.
+export type CanvasSidePanelNodeMeta = ComponentType<{ node: CanvasNodeData; theme: CanvasTheme }>;
 
 // Context injected while rendering each node; the primary interface between plugins and the canvas.
 export type CanvasNodeContext = {
@@ -143,5 +150,10 @@ export type CanvasPlugin = {
     minAppVersion?: string;
     css?: string; // Injected when enabled and removed when uninstalled or disabled.
     nodes: CanvasNodeDefinition[];
+    nodeOverlays?: CanvasNodeOverlay[];
+    sidePanelNodeMeta?: CanvasSidePanelNodeMeta[];
+    modelPlugins?: VideoModelPlugin[];
+    // Trusted local plugins may opt in when first discovered. Third-party URLs always require manual installation.
+    autoEnable?: boolean;
     setup?: (app: CanvasPluginApp) => void | (() => void);
 };

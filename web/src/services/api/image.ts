@@ -735,7 +735,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, quality, count: n, negativePrompt: config.negativePrompt || "", denoise: Number.isFinite(Number(config.denoise)) ? Math.min(1, Math.max(0, Number(config.denoise))) : 0.75, upscale: config.upscale !== "false", upscaleFactor: Math.max(1, Number(config.upscaleFactor) || 2), ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -779,11 +779,11 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
+    const requestPrompt = script && isComfyUiImageScript(script) ? prompt.trim() : buildImageReferencePromptText(prompt, references);
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -796,7 +796,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, quality, count: n, ...(mask ? { mask: await imageToDataUrl(mask) } : {}), negativePrompt: config.negativePrompt || "", denoise: Number.isFinite(Number(config.denoise)) ? Math.min(1, Math.max(0, Number(config.denoise))) : 0.75, upscale: config.upscale !== "false", upscaleFactor: Math.max(1, Number(config.upscaleFactor) || 2), ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -836,6 +836,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     const imageField = files.length > 1 ? "image[]" : "image";
     files.forEach((file) => formData.append(imageField, file));
+    if (mask) formData.append("mask", await imageToDataUrl(mask).then((dataUrl) => dataUrlToFile({ ...mask, dataUrl })));
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
@@ -844,6 +845,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
+}
+
+function isComfyUiImageScript(script: string) {
+    return script.includes("ComfyUI") || (script.includes("workflowParams") && script.includes("negative_prompt"));
 }
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {

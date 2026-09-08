@@ -10,7 +10,8 @@ export type PromptSource = {
 };
 
 export const PROMPT_REGISTRY_HOMEPAGE = "https://github.com/yukkcat/image-prompts";
-const PROMPT_REGISTRY_SOURCE_BASE = "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources";
+// Served through the local Nginx proxy to avoid browser CORS/PNA failures on HTTP/IP deployments.
+const PROMPT_REGISTRY_SOURCE_BASE = "/prompt-sources";
 
 export function createPromptSource(source?: Partial<PromptSource>): PromptSource {
     return {

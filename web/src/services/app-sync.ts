@@ -1,21 +1,43 @@
 import localforage from "localforage";
 
-import i18n from "@/i18n";
+import i18n, { changeAppLocale, type AppLocale } from "@/i18n";
+import { IMAGE_QUICK_TOOLS_STORAGE_KEY } from "@/components/canvas/canvas-image-toolbar-tools";
+import { exportPluginStorage, importPluginStorage } from "@/lib/canvas/canvas-event-bus";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
 import { downloadWebdavFile, uploadWebdavFile, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
-import type { WebdavSyncConfig } from "@/stores/use-config-store";
-import type { CanvasDeletedProject, CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { defaultConfig, useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { usePromptSourceStore, type PromptSourceSchedule } from "@/stores/use-prompt-source-store";
+import type { PromptSource } from "@/services/api/prompt-source-presets";
+import { useThemeStore, type ThemeName } from "@/stores/use-theme-store";
+import { useAgentStore, type AgentPermissionMode, type AgentReasoningEffort } from "@/stores/use-agent-store";
+import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
+import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
+import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 
 type StoredLog = Record<string, unknown> & { id?: string };
-export type AppSyncDomainKey = "canvas" | "assets" | "image-workbench" | "video-workbench";
+export type AppSyncDomainKey = "canvas" | "assets" | "image-workbench" | "video-workbench" | "settings" | "prompt-sources" | "plugins" | "plugin-storage" | "prompt-cache";
 type DomainKey = AppSyncDomainKey;
-type CanvasDomainData = { projects: CanvasProject[]; deleted: CanvasDeletedProject[] };
+type CanvasDomainData = { projects: CanvasProject[] };
 type AssetDomainData = { assets: Asset[] };
 type LogDomainData = { logs: StoredLog[] };
+type TrackedData<T> = T & { updatedAt: string };
+type SettingsDomainData = TrackedData<{
+    config: AiConfig;
+    theme: ThemeName;
+    locale: AppLocale;
+    preferences: Record<string, string | null>;
+    agent: { url: string; token: string; permissionMode: AgentPermissionMode; model: string; reasoningEffort: AgentReasoningEffort | "" };
+}>;
+type PromptSourcesDomainData = TrackedData<{ sources: PromptSource[]; schedule: PromptSourceSchedule }>;
+type PluginsDomainData = TrackedData<{ plugins: InstalledPlugin[] }>;
+type EncodedValue = null | boolean | number | string | EncodedValue[] | { [key: string]: EncodedValue };
+type PluginStorageDomainData = TrackedData<{ plugins: Array<{ id: string; entries: Array<{ key: string; value: EncodedValue }> }> }>;
+type PromptCacheDomainData = TrackedData<{ entries: Array<{ key: string; value: StoredLog }> }>;
+
 
 type AppSyncFile = {
     storageKey: string;
@@ -58,6 +80,11 @@ export type AppSyncResult = {
     assets: number;
     imageLogs: number;
     videoLogs: number;
+    settings: number;
+    promptSources: number;
+    plugins: number;
+    pluginStorageEntries: number;
+    promptCacheEntries: number;
     files: number;
     manifestBytes: number;
     uploadedFiles: number;
@@ -78,24 +105,29 @@ export type AppSyncProgress = (event: AppSyncProgressEvent) => void;
 const FILE_CONCURRENCY = 3;
 const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 type LogStore = typeof imageLogStore;
 const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-reference):/;
 
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     emitProgress(onProgress, { stage: "等待本地数据加载" });
-    await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
+    await Promise.all([
+        waitForHydration(useCanvasStore),
+        waitForHydration(useAssetStore),
+        waitForPersistHydration(useConfigStore),
+        waitForPersistHydration(usePromptSourceStore),
+        waitForPersistHydration(useThemeStore),
+        waitForPersistHydration(usePluginStore),
+    ]);
 
-    const [canvas, assets, imageLogs, videoLogs] = await Promise.all([
+    const [canvas, assets, imageLogs, videoLogs, settings, promptSources, plugins, pluginStorage, promptCache] = await Promise.all([
         syncDomain<CanvasDomainData>(config, onProgress, {
             key: "canvas",
             label: "画布",
-            emptyData: { projects: [], deleted: [] },
-            localData: async () => {
-                const { projects, deletedProjects } = useCanvasStore.getState();
-                return { projects, deleted: deletedProjects };
-            },
-            mergeData: mergeCanvasData,
-            applyData: async (data) => useCanvasStore.getState().replaceProjects(data.projects, data.deleted),
+            emptyData: { projects: [] },
+            localData: async () => ({ projects: useCanvasStore.getState().projects }),
+            mergeData: (local, remote) => ({ projects: mergeById(local.projects, remote.projects, "updatedAt") }),
+            applyData: async (data) => useCanvasStore.getState().replaceProjects(data.projects),
         }),
         syncDomain<AssetDomainData>(config, onProgress, {
             key: "assets",
@@ -121,19 +153,73 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
             mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
             applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs),
         }),
+        syncDomain<SettingsDomainData>(config, onProgress, {
+            key: "settings",
+            label: "应用设置",
+            emptyData: emptySettingsData(),
+            localData: readSettingsData,
+            mergeData: mergeTrackedData,
+            applyData: applySettingsData,
+        }),
+        syncDomain<PromptSourcesDomainData>(config, onProgress, {
+            key: "prompt-sources",
+            label: "提示词源",
+            emptyData: { sources: [], schedule: { intervalMinutes: 30, lastFetchedAt: "" }, updatedAt: "" },
+            localData: async () => trackLocalData("prompt-sources", pickPromptSources()),
+            mergeData: mergeTrackedData,
+            applyData: async (data) => {
+                usePromptSourceStore.setState({ sources: data.sources, schedule: data.schedule });
+                saveTrackedData("prompt-sources", data);
+            },
+        }),
+        syncDomain<PluginsDomainData>(config, onProgress, {
+            key: "plugins",
+            label: "节点插件",
+            emptyData: { plugins: [], updatedAt: "" },
+            localData: async () => trackLocalData("plugins", { plugins: usePluginStore.getState().plugins }),
+            mergeData: mergeTrackedData,
+            applyData: async (data) => {
+                usePluginStore.setState({ plugins: data.plugins });
+                saveTrackedData("plugins", data);
+            },
+        }),
+        syncDomain<PluginStorageDomainData>(config, onProgress, {
+            key: "plugin-storage",
+            label: "插件数据",
+            emptyData: { plugins: [], updatedAt: "" },
+            localData: readPluginStorageData,
+            mergeData: mergeTrackedData,
+            applyData: applyPluginStorageData,
+        }),
+        syncDomain<PromptCacheDomainData>(config, onProgress, {
+            key: "prompt-cache",
+            label: "提示词缓存",
+            emptyData: { entries: [], updatedAt: "" },
+            localData: async () => trackLocalData("prompt-cache", { entries: await readStoredEntries(promptCacheStore) }),
+            mergeData: mergeTrackedData,
+            applyData: async (data) => {
+                await replaceStoredEntries(promptCacheStore, data.entries);
+                saveTrackedData("prompt-cache", data);
+            },
+        }),
     ]);
 
     const result = {
         syncedAt: new Date().toISOString(),
-        mergedRemote: [canvas, assets, imageLogs, videoLogs].some((item) => item.mergedRemote),
+        mergedRemote: [canvas, assets, imageLogs, videoLogs, settings, promptSources, plugins, pluginStorage, promptCache].some((item) => item.mergedRemote),
         projects: canvas.data.projects.length,
         assets: assets.data.assets.length,
         imageLogs: imageLogs.data.logs.length,
         videoLogs: videoLogs.data.logs.length,
-        files: canvas.files + assets.files + imageLogs.files + videoLogs.files,
-        manifestBytes: canvas.manifestBytes + assets.manifestBytes + imageLogs.manifestBytes + videoLogs.manifestBytes,
-        uploadedFiles: canvas.uploadedFiles + assets.uploadedFiles + imageLogs.uploadedFiles + videoLogs.uploadedFiles,
-        uploadedBytes: canvas.uploadedBytes + assets.uploadedBytes + imageLogs.uploadedBytes + videoLogs.uploadedBytes,
+        settings: 1,
+        promptSources: promptSources.data.sources.length,
+        plugins: plugins.data.plugins.length,
+        pluginStorageEntries: pluginStorage.data.plugins.reduce((count, plugin) => count + plugin.entries.length, 0),
+        promptCacheEntries: promptCache.data.entries.length,
+        files: canvas.files + assets.files + imageLogs.files + videoLogs.files + settings.files + promptSources.files + plugins.files + pluginStorage.files + promptCache.files,
+        manifestBytes: canvas.manifestBytes + assets.manifestBytes + imageLogs.manifestBytes + videoLogs.manifestBytes + settings.manifestBytes + promptSources.manifestBytes + plugins.manifestBytes + pluginStorage.manifestBytes + promptCache.manifestBytes,
+        uploadedFiles: canvas.uploadedFiles + assets.uploadedFiles + imageLogs.uploadedFiles + videoLogs.uploadedFiles + settings.uploadedFiles + promptSources.uploadedFiles + plugins.uploadedFiles + pluginStorage.uploadedFiles + promptCache.uploadedFiles,
+        uploadedBytes: canvas.uploadedBytes + assets.uploadedBytes + imageLogs.uploadedBytes + videoLogs.uploadedBytes + settings.uploadedBytes + promptSources.uploadedBytes + plugins.uploadedBytes + pluginStorage.uploadedBytes + promptCache.uploadedBytes,
     };
     emitProgress(onProgress, { stage: "同步完成", status: "success" });
     return result;
@@ -295,30 +381,15 @@ async function replaceStoredLogs(store: LogStore, logs: StoredLog[]) {
     });
 }
 
-function mergeCanvasData(local: CanvasDomainData, remote: CanvasDomainData): CanvasDomainData {
-    const localDeleted = local.deleted || [];
-    const remoteDeleted = remote.deleted || [];
-    const deletedAtById = new Map<string, string>();
-    for (const item of [...remoteDeleted, ...localDeleted]) {
-        if (!item.id || !item.deletedAt) continue;
-        const current = deletedAtById.get(item.id);
-        if (!current || item.deletedAt >= current) deletedAtById.set(item.id, item.deletedAt);
-    }
+async function readStoredEntries(store: LogStore) {
+    const entries: Array<{ key: string; value: StoredLog }> = [];
+    await store.iterate<StoredLog, void>((value, key) => entries.push({ key, value }));
+    return entries;
+}
 
-    const projects = mergeById(local.projects || [], remote.projects || [], "updatedAt").filter((project) => {
-        const deletedAt = deletedAtById.get(project.id);
-        if (!deletedAt) return true;
-        if (getTime(project as Record<string, unknown>, "updatedAt") > Date.parse(deletedAt)) {
-            deletedAtById.delete(project.id);
-            return true;
-        }
-        return false;
-    });
-
-    return {
-        projects,
-        deleted: [...deletedAtById.entries()].map(([id, deletedAt]) => ({ id, deletedAt })),
-    };
+async function replaceStoredEntries(store: LogStore, entries: Array<{ key: string; value: StoredLog }>) {
+    await store.clear();
+    await runWithConcurrency(entries, FILE_CONCURRENCY, async ({ key, value }) => store.setItem(key, value));
 }
 
 function mergeById<T extends { id?: string }>(local: T[], remote: T[], timeKey: string) {
@@ -352,10 +423,123 @@ function domainPath(domain: DomainKey, path: string) {
 }
 
 function domainLabel(domain: DomainKey) {
-    if (domain === "canvas") return "画布";
-    if (domain === "assets") return "我的资产";
-    if (domain === "image-workbench") return "生图工作台";
-    return "视频创作台";
+    const labels: Record<DomainKey, string> = {
+        canvas: "画布",
+        assets: "我的资产",
+        "image-workbench": "生图工作台",
+        "video-workbench": "视频创作台",
+        settings: "应用设置",
+        "prompt-sources": "提示词源",
+        plugins: "节点插件",
+        "plugin-storage": "插件数据",
+        "prompt-cache": "提示词缓存",
+    };
+    return labels[domain];
+}
+
+
+const SETTINGS_KEYS = ["canvas-side-panel-width", "canvas-side-panel-open", "canvas-agent-panel-width", IMAGE_QUICK_TOOLS_STORAGE_KEY] as const;
+const TRACKING_PREFIX = "infinite-canvas:webdav-tracking:";
+
+function emptySettingsData(): SettingsDomainData {
+    return { config: defaultConfig, theme: "dark", locale: "zh-CN", preferences: {}, agent: { url: "", token: "", permissionMode: "request", model: "", reasoningEffort: "" }, updatedAt: "" };
+}
+
+function pickPromptSources() {
+    const { sources, schedule } = usePromptSourceStore.getState();
+    return { sources, schedule };
+}
+
+async function readSettingsData(): Promise<SettingsDomainData> {
+    const agent = useAgentStore.getState();
+    return trackLocalData("settings", {
+        config: useConfigStore.getState().config,
+        theme: useThemeStore.getState().theme,
+        locale: ((i18n.resolvedLanguage || i18n.language) as AppLocale) || "zh-CN",
+        preferences: Object.fromEntries(SETTINGS_KEYS.map((key) => [key, localStorage.getItem(key)])),
+        agent: { url: agent.url, token: agent.token, permissionMode: agent.permissionMode, model: agent.model, reasoningEffort: agent.reasoningEffort },
+    });
+}
+
+async function applySettingsData(data: SettingsDomainData) {
+    useConfigStore.setState({ config: { ...defaultConfig, ...data.config } });
+    useThemeStore.getState().setTheme(data.theme);
+    await changeAppLocale(data.locale);
+    Object.entries(data.preferences).forEach(([key, value]) => (value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value)));
+    const width = Number(data.preferences["canvas-side-panel-width"]);
+    const panelOpen = data.preferences["canvas-side-panel-open"] !== "0";
+    useCanvasSidePanelStore.setState({ width: width || useCanvasSidePanelStore.getState().width, panelOpen, panelMounted: panelOpen, panelClosing: false });
+    localStorage.setItem("canvas-agent-url", data.agent.url);
+    localStorage.setItem("canvas-agent-token", data.agent.token);
+    localStorage.setItem("canvas-agent-permission-mode", data.agent.permissionMode);
+    localStorage.setItem("canvas-agent-model", data.agent.model);
+    localStorage.setItem("canvas-agent-reasoning-effort", data.agent.reasoningEffort);
+    useAgentStore.getState().setAgentState({ ...data.agent, width: Number(data.preferences["canvas-agent-panel-width"]) || useAgentStore.getState().width });
+    saveTrackedData("settings", data);
+}
+
+async function readPluginStorageData(): Promise<PluginStorageDomainData> {
+    const raw = await exportPluginStorage(usePluginStore.getState().plugins.map((plugin) => plugin.id));
+    const encoded = await Promise.all(raw.map(async (plugin) => ({ id: plugin.id, entries: await Promise.all(plugin.entries.map(async (entry) => ({ key: entry.key, value: await encodeValue(entry.value) }))) })));
+    return trackLocalData("plugin-storage", { plugins: encoded });
+}
+
+async function applyPluginStorageData(data: PluginStorageDomainData) {
+    const decoded = await Promise.all(data.plugins.map(async (plugin) => ({ id: plugin.id, entries: await Promise.all(plugin.entries.map(async (entry) => ({ key: entry.key, value: await decodeValue(entry.value) }))) })));
+    await importPluginStorage(decoded);
+    saveTrackedData("plugin-storage", data);
+}
+
+function mergeTrackedData<T extends { updatedAt: string }>(local: T, remote: T) {
+    return getTime(local as Record<string, unknown>, "updatedAt") > getTime(remote as Record<string, unknown>, "updatedAt") ? local : remote;
+}
+
+function trackLocalData<T extends object>(scope: string, value: T): T & { updatedAt: string } {
+    const fingerprint = JSON.stringify(value);
+    const key = `${TRACKING_PREFIX}${scope}`;
+    let metadata: { fingerprint: string; updatedAt: string } | null = null;
+    try { metadata = JSON.parse(localStorage.getItem(key) || "null"); } catch { metadata = null; }
+    if (!metadata) metadata = { fingerprint, updatedAt: "" };
+    else if (metadata.fingerprint !== fingerprint) metadata = { fingerprint, updatedAt: new Date().toISOString() };
+    localStorage.setItem(key, JSON.stringify(metadata));
+    return { ...value, updatedAt: metadata.updatedAt };
+}
+
+function saveTrackedData(scope: string, data: object) {
+    const { updatedAt = "", ...value } = data as Record<string, unknown>;
+    localStorage.setItem(`${TRACKING_PREFIX}${scope}`, JSON.stringify({ fingerprint: JSON.stringify(value), updatedAt }));
+}
+
+async function encodeValue(value: unknown): Promise<EncodedValue> {
+    if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
+    if (value instanceof Date) return { __webdavType: "date", value: value.toISOString() };
+    if (value instanceof Blob) return { __webdavType: "blob", mimeType: value.type, data: await blobToBase64(value) };
+    if (value instanceof ArrayBuffer) return { __webdavType: "array-buffer", data: bytesToBase64(new Uint8Array(value)) };
+    if (ArrayBuffer.isView(value)) return { __webdavType: "typed-array", name: value.constructor.name, data: bytesToBase64(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)) };
+    if (Array.isArray(value)) return Promise.all(value.map(encodeValue));
+    if (value && typeof value === "object") return Object.fromEntries(await Promise.all(Object.entries(value).map(async ([key, item]) => [key, await encodeValue(item)])));
+    return String(value);
+}
+
+async function decodeValue(value: EncodedValue): Promise<unknown> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return Array.isArray(value) ? Promise.all(value.map(decodeValue)) : value;
+    const tagged = value as Record<string, EncodedValue>;
+    if (tagged.__webdavType === "date" && typeof tagged.value === "string") return new Date(tagged.value);
+    if ((tagged.__webdavType === "blob" || tagged.__webdavType === "array-buffer" || tagged.__webdavType === "typed-array") && typeof tagged.data === "string") {
+        const bytes = base64ToBytes(tagged.data);
+        if (tagged.__webdavType === "blob") return new Blob([bytes], { type: typeof tagged.mimeType === "string" ? tagged.mimeType : "" });
+        return bytes.buffer;
+    }
+    return Object.fromEntries(await Promise.all(Object.entries(tagged).map(async ([key, item]) => [key, await decodeValue(item)])));
+}
+
+function blobToBase64(blob: Blob) { return blob.arrayBuffer().then((buffer) => bytesToBase64(new Uint8Array(buffer))); }
+function bytesToBase64(bytes: Uint8Array) { let binary = ""; bytes.forEach((byte) => (binary += String.fromCharCode(byte))); return btoa(binary); }
+function base64ToBytes(value: string) { const binary = atob(value); return Uint8Array.from(binary, (char) => char.charCodeAt(0)); }
+
+function waitForPersistHydration(store: { persist: { hasHydrated: () => boolean; onFinishHydration: (listener: () => void) => () => void } }) {
+    if (store.persist.hasHydrated()) return Promise.resolve();
+    return new Promise<void>((resolve) => { const unsubscribe = store.persist.onFinishHydration(() => { unsubscribe(); resolve(); }); });
 }
 
 function emitProgress(onProgress: AppSyncProgress | undefined, event: AppSyncProgressEvent) {

@@ -1,5 +1,6 @@
-import { registerNodeDefinitions, unregisterPluginNodes } from "@/lib/canvas/node-registry";
+import { registerNodeDefinitions, registerNodeOverlays, registerSidePanelNodeMeta, unregisterPluginNodes } from "@/lib/canvas/node-registry";
 import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
+import { registerVideoModelPlugins, unregisterVideoModelPlugins } from "@/services/api/model-plugins";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import type { CanvasPlugin } from "@/types/canvas-plugin";
 import i18n from "@/i18n";
@@ -25,11 +26,14 @@ async function evaluatePluginSource(source: string): Promise<CanvasPlugin> {
 function assertPlugin(plugin: unknown): asserts plugin is CanvasPlugin {
     const value = plugin as Partial<CanvasPlugin> | null;
     if (!value || typeof value !== "object") throw new Error(i18n.t("canvas.pluginErrors.invalidExport"));
-    if (!value.id || !Array.isArray(value.nodes) || !value.nodes.length) throw new Error(i18n.t("canvas.pluginErrors.missingFields"));
+    if (!value.id || !Array.isArray(value.nodes) || (!value.nodes.length && !value.nodeOverlays?.length && !value.modelPlugins?.length)) throw new Error(i18n.t("canvas.pluginErrors.missingFields"));
 }
 
 export function activatePlugin(plugin: CanvasPlugin) {
     registerNodeDefinitions(plugin.nodes, plugin.id);
+    registerNodeOverlays(plugin.nodeOverlays, plugin.id);
+    registerSidePanelNodeMeta(plugin.sidePanelNodeMeta, plugin.id);
+    registerVideoModelPlugins(plugin.modelPlugins, plugin.id);
     const runtime = getPluginRuntime();
     const disposers: Array<() => void> = [];
     // Inject declared styles when enabled and remove them when disabled or uninstalled.
@@ -43,6 +47,7 @@ export function deactivatePlugin(pluginId: string) {
     cleanups.get(pluginId)?.();
     cleanups.delete(pluginId);
     unregisterPluginNodes(pluginId);
+    unregisterVideoModelPlugins(pluginId);
 }
 
 async function fetchPluginSource(url: string) {
@@ -138,7 +143,7 @@ async function loadLocalPlugins() {
                     description: plugin.description,
                     url,
                     source,
-                    enabled: existing?.enabled ?? false, // Preserve the user setting; new discoveries default to disabled.
+                    enabled: existing?.enabled ?? plugin.autoEnable ?? false, // Preserve the user setting; bundled trusted plugins may opt in on first discovery.
                     local: true,
                 });
             } catch (error) {

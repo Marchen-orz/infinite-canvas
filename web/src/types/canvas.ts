@@ -59,6 +59,10 @@ export type CanvasNodeMetadata = {
     quality?: string;
     background?: string;
     count?: number;
+    negativePrompt?: string;
+    denoise?: string;
+    upscale?: string;
+    upscaleFactor?: string;
     textCount?: number;
     texts?: CanvasNodeText[];
     primaryTextId?: string;
@@ -66,7 +70,8 @@ export type CanvasNodeMetadata = {
     vquality?: string;
     generateAudio?: string;
     watermark?: string;
-    videoMode?: string;
+    useContextIr?: string;
+    skillId?: string;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;
@@ -81,8 +86,10 @@ export type CanvasNodeMetadata = {
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
-    videoTaskId?: string;
-    videoTaskProvider?: "openai" | "gemini";
+    // Request timing is kept separate from media duration (for example, an MP4's playback length).
+    generationStartedAt?: number;
+    generationFinishedAt?: number;
+    generationDurationMs?: number;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };

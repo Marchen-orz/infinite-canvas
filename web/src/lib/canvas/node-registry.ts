@@ -2,11 +2,13 @@ import { create } from "zustand";
 
 import i18n from "@/i18n";
 
-import type { CanvasNodeDefinition } from "@/types/canvas-plugin";
+import type { CanvasNodeDefinition, CanvasNodeOverlay, CanvasSidePanelNodeMeta } from "@/types/canvas-plugin";
 import { CanvasNodeType } from "@/types/canvas";
 
 const definitions = new Map<string, CanvasNodeDefinition>();
 const ownerByType = new Map<string, string>(); // type -> pluginId; built-in nodes use "builtin".
+const overlaysByPlugin = new Map<string, CanvasNodeOverlay[]>();
+const sidePanelMetaByPlugin = new Map<string, CanvasSidePanelNodeMeta[]>();
 
 // Increment the registry version on registration or removal to update dependent UI such as creation menus.
 export const useNodeRegistryVersion = create<{ version: number }>(() => ({ version: 0 }));
@@ -22,13 +24,29 @@ export function registerNodeDefinitions(defs: CanvasNodeDefinition[], pluginId =
     bump();
 }
 
+export function registerNodeOverlays(overlays: CanvasNodeOverlay[] | undefined, pluginId: string) {
+    if (!overlays?.length) return;
+    overlaysByPlugin.set(pluginId, overlays);
+    bump();
+}
+
+export function registerSidePanelNodeMeta(components: CanvasSidePanelNodeMeta[] | undefined, pluginId: string) {
+    if (!components?.length) return;
+    sidePanelMetaByPlugin.set(pluginId, components);
+    bump();
+}
+
 export function unregisterPluginNodes(pluginId: string) {
+    let removedNodes = false;
     for (const [type, owner] of ownerByType) {
         if (owner !== pluginId) continue;
         definitions.delete(type);
         ownerByType.delete(type);
+        removedNodes = true;
     }
-    bump();
+    const removedOverlays = overlaysByPlugin.delete(pluginId);
+    const removedSidePanelMeta = sidePanelMetaByPlugin.delete(pluginId);
+    if (removedNodes || removedOverlays || removedSidePanelMeta) bump();
 }
 
 export function getNodeDefinition(type: string) {
@@ -41,6 +59,14 @@ export function getNodePluginId(type: string) {
 
 export function listNodeDefinitions() {
     return Array.from(definitions.values());
+}
+
+export function listNodeOverlays() {
+    return Array.from(overlaysByPlugin.entries()).flatMap(([pluginId, overlays]) => overlays.map((Overlay, index) => ({ id: `${pluginId}:${index}`, Overlay })));
+}
+
+export function listSidePanelNodeMeta() {
+    return Array.from(sidePanelMetaByPlugin.entries()).flatMap(([pluginId, components]) => components.map((Component, index) => ({ id: `${pluginId}:${index}`, Component })));
 }
 
 export function isRegisteredNodeType(type: string) {

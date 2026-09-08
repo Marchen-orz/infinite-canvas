@@ -36,7 +36,7 @@ const modelGroups: ModelGroup[] = [
     { capability: "audio", modelKey: "audioModel", labelKey: "config.preferences.defaultAudioModel" },
 ];
 
-const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
+const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench", "settings", "prompt-sources", "plugins", "plugin-storage", "prompt-cache"];
 function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProgress> {
     return webdavDomainKeys.reduce(
         (progress, key) => ({
@@ -425,6 +425,9 @@ function WebdavProgressGrid({ progress, t }: { progress: Record<AppSyncDomainKey
 function domainTranslationKey(domain: AppSyncDomainKey) {
     if (domain === "image-workbench") return "imageWorkbench";
     if (domain === "video-workbench") return "videoWorkbench";
+    if (domain === "prompt-sources") return "promptSources";
+    if (domain === "plugin-storage") return "pluginStorage";
+    if (domain === "prompt-cache") return "promptCache";
     return domain;
 }
 
