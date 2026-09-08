@@ -7,6 +7,7 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- Media editor portrait preview: the program monitor must reserve enough height to show a full portrait image or video with `object-fit: contain`; when the whole desk exceeds the viewport, the desk itself should scroll rather than crop the monitor.
 - Media editor bin row sizing: each connected material item should keep a compact fixed height instead of stretching to fill the remaining material-bin panel height.
 - Media editor sources and image crop: the media bin should contain only image, audio, and video nodes directly connected into the editor; selecting an image should expose normalized crop controls, exporting should add the crop to the timeline, and right-clicking any bin item should create a corresponding canvas node. Bin typography and row height should stay compact.
 - Media editor visual consistency: the collapsed editor node should fill its complete canvas card, the editing panel should use the same warm-black neutral palette as the dark canvas, and portrait or landscape media should remain contained inside a centered preview monitor no taller than 280 px instead of expanding the whole panel.
