@@ -10,8 +10,6 @@ export type MediaEditorSource = {
     storageKey?: string;
     mimeType?: string;
     kind: "video" | "audio";
-    startSeconds?: number;
-    endSeconds?: number;
 };
 
 export type MediaEditorRequest = {
@@ -100,24 +98,7 @@ export async function editMedia(request: MediaEditorRequest) {
             args.push(...(first.kind === "video" ? ["-map", "0:v?", "-map", "0:a?", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart"] : ["-vn", "-c:a", "libmp3lame", "-q:a", "2"]), output.path);
         } else if (request.operation === "concat") {
             if (files.length < 2) throw new Error("拼接至少需要两个素材");
-            // The timeline passes an in/out range per source. Materialize each range first,
-            // then concatenate the materialized files in the exact timeline order.
-            const parts: string[] = [];
-            for (let index = 0; index < files.length; index++) {
-                const source = request.sources[index];
-                const part = `part-${index}.${output.path.endsWith("mp4") ? "mp4" : "mp3"}`;
-                const partStart = seconds(source.startSeconds, 0);
-                const partEnd = seconds(source.endSeconds, 0);
-                const partArgs = ["-i", files[index], "-ss", partStart.toFixed(6)];
-                if (partEnd > partStart) partArgs.push("-to", partEnd.toFixed(6));
-                if (source.kind === "video") partArgs.push("-map", "0:v?", "-map", "0:a?", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart");
-                else partArgs.push("-vn", "-c:a", "libmp3lame", "-q:a", "2");
-                partArgs.push(part);
-                const partResult = await worker.exec(partArgs);
-                if (partResult !== 0) throw new Error("时间轴片段处理失败");
-                parts.push(part);
-            }
-            const list = parts.map((file) => `file '${file}'`).join("\n");
+            const list = files.map((file) => `file '${file}'`).join("\n");
             await worker.writeFile("concat.txt", list);
             args = ["-f", "concat", "-safe", "0", "-i", "concat.txt", "-c", "copy", output.path];
         } else if (request.operation === "extract-audio") {
@@ -143,6 +124,6 @@ export async function editMedia(request: MediaEditorRequest) {
         if (typeof data === "string") throw new Error("剪辑结果读取失败");
         return new Blob([data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer], { type: output.mimeType });
     } finally {
-        await Promise.all([...files, ...request.sources.map((_, index) => `part-${index}.${output.path.endsWith("mp4") ? "mp4" : "mp3"}`), "concat.txt", output.path].map((path) => worker.deleteFile(path).catch(() => undefined)));
+        await Promise.all([...files, "concat.txt", output.path].map((path) => worker.deleteFile(path).catch(() => undefined)));
     }
 }

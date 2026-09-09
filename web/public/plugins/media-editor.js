@@ -1,53 +1,231 @@
 export default function createMediaEditorPlugin(runtime) {
   const { React, jsx } = runtime;
   const { useEffect, useMemo, useRef, useState } = React;
+
+  const names = { trim: "截取", concat: "拼接", crop: "裁剪", "extract-audio": "提取音频", mute: "静音", "audio-adjust": "音量", "video-speed": "变速" };
   const typeName = { image: "图片", video: "视频", audio: "音频" };
-  const isMedia = (node) => ["image", "video", "audio"].includes(node.type) && Boolean(node.metadata?.content || node.metadata?.storageKey);
-  const num = (v, d = 0) => Number.isFinite(Number(v)) ? Number(v) : d;
-  const duration = (node) => Math.max(0, num(node?.metadata?.durationMs) / 1000);
-  const id = () => `clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const dataOf = (node) => node?.metadata?.pluginData && typeof node.metadata.pluginData === "object" ? node.metadata.pluginData : {};
-  const tc = (frame, fps) => { const f = Math.max(0, Math.round(frame)); return `${String(Math.floor(f / fps / 60)).padStart(2, "0")}:${String(Math.floor(f / fps) % 60).padStart(2, "0")}:${String(f % fps).padStart(2, "0")}`; };
-  const clipLength = (clip) => Math.max(1, clip.outFrame - clip.inFrame);
-  const seqEnd = (clips) => Math.max(1, ...clips.map((c) => c.start + clipLength(c)));
+  const isMedia = (node) => ["image", "video", "audio"].includes(node.type) && Boolean(node.metadata?.content);
+  const isAudioVideo = (node) => ["video", "audio"].includes(node?.type);
+  const toNumber = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+  const durationOf = (node) => Math.max(0, toNumber(node?.metadata?.durationMs) / 1000);
+  const timecode = (seconds) => {
+    const value = Math.max(0, toNumber(seconds));
+    const minutes = Math.floor(value / 60);
+    const remainder = value % 60;
+    return `${String(minutes).padStart(2, "0")}:${remainder.toFixed(3).padStart(6, "0")}`;
+  };
+  const pluginData = (node) => node.metadata?.pluginData && typeof node.metadata.pluginData === "object" ? node.metadata.pluginData : {};
+  const icon = (name) => ({ cut: "✂", join: "↔", audio: "♪", mute: "⌁", speed: "›", play: "▶", pause: "Ⅱ", back: "↶", close: "×", video: "▣" }[name] || "•");
 
   function EditorContent({ ctx }) {
-    const d = dataOf(ctx.node); const count = Array.isArray(d.clips) ? d.clips.length : ctx.getUpstream().filter(isMedia).length;
-    return jsx("div", { className: "cutdesk-node" }, jsx("div", { className: "cutdesk-node-mark" }, "✂"), jsx("div", { className: "cutdesk-node-copy" }, jsx("strong", null, "剪辑台"), jsx("span", null, count ? `${count} 个时间轴片段` : "连接图片、音频或视频开始剪辑")), jsx("button", { type: "button", className: "cutdesk-node-open", onPointerDown: e => e.stopPropagation(), onClick: () => ctx.openPanel() }, "剪辑"));
+    const data = pluginData(ctx.node);
+    const count = Array.isArray(data.sourceIds) ? data.sourceIds.length : ctx.getUpstream().filter(isMedia).length;
+    return jsx("div", { className: "cutdesk-node" },
+      jsx("div", { className: "cutdesk-node-mark" }, icon("cut")),
+      jsx("div", { className: "cutdesk-node-copy" }, jsx("strong", null, "剪辑台"), jsx("span", null, count ? `${count} 段素材 · ${names[data.operation] || "截取"}` : "连接图片、音频或视频开始剪辑")),
+      jsx("button", { type: "button", className: "cutdesk-node-open", onPointerDown: (event) => event.stopPropagation(), onClick: () => ctx.openPanel() }, "剪辑"),
+    );
   }
 
-  function MediaItem({ node, active, index, onClick, onCreate, onDragStart }) {
-    return jsx("button", { type: "button", draggable: true, className: `cutdesk-media-item ${active ? "active" : ""}`, onClick, onDragStart: e => onDragStart(e, node), onContextMenu: e => { e.preventDefault(); e.stopPropagation(); onCreate(node); }, title: "点击加入时间轴；拖到下方轨道；右键创建画布节点" }, jsx("span", { className: "cutdesk-media-thumb" }, node.type === "video" ? "▣" : node.type === "audio" ? "♪" : "▧"), jsx("span", { className: "cutdesk-media-copy" }, jsx("b", null, node.title || "未命名素材"), jsx("small", null, `${typeName[node.type]} · ${node.type === "image" ? "静帧" : `${duration(node).toFixed(2)} 秒`}`)), active ? jsx("span", { className: "cutdesk-media-order" }, index + 1) : null);
+  function MediaBinItem({ node, active, onClick, index, onCreateNode }) {
+    return jsx("button", { type: "button", className: `cutdesk-media-item ${active ? "active" : ""}`, onClick, title: node.title || "未命名素材", onContextMenu: (event) => { event.preventDefault(); event.stopPropagation(); onCreateNode(node); } },
+      jsx("span", { className: "cutdesk-media-thumb" }, node.type === "video" ? icon("video") : node.type === "image" ? "▧" : icon("audio")),
+      jsx("span", { className: "cutdesk-media-copy" }, jsx("b", null, node.title || "未命名素材"), jsx("small", null, `${typeName[node.type]} · ${timecode(durationOf(node))}`)),
+      active ? jsx("span", { className: "cutdesk-media-order" }, index + 1) : null,
+    );
   }
 
-  function Timeline({ clips, assets, fps, cursor, selectedId, onSelect, onChange, onSeek, onAdd }) {
-    const [zoom, setZoom] = useState(70); const [snap, setSnap] = useState(true); const [draft, setDraft] = useState(null); const scroll = useRef(null); const drag = useRef(null);
-    const shown = draft || clips; const px = zoom / fps; const end = seqEnd(shown); const width = Math.max(760, (end + fps * 3) * px);
-    const locate = e => Math.max(0, Math.round((e.clientX - e.currentTarget.getBoundingClientRect().left) / px));
-    const snapFrame = (f, ignoreId) => { if (!snap) return Math.max(0, f); const points = [0, ...clips.filter(c => c.id !== ignoreId).flatMap(c => [c.start, c.start + clipLength(c)])]; const nearest = points.reduce((best, p) => Math.abs(p - f) < Math.abs(best - f) ? p : best, f); return Math.abs(nearest - f) <= Math.round(8 / px) ? nearest : Math.max(0, f); };
-    const begin = (e, clip, edge) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); drag.current = { clip, edge, x: e.clientX, base: edge === "left" ? clip.inFrame : edge === "right" ? clip.outFrame : clip.start, next: clips, moved: false }; onSelect(clip.id); };
-    const move = e => { const d = drag.current; if (!d) return; const delta = Math.round((e.clientX - d.x) / px); if (Math.abs(delta) < 2 && !d.moved) return; d.moved = true; const c = d.clip; let next = { ...c }; if (d.edge === "left") { next.inFrame = Math.max(0, Math.min(c.outFrame - 1, d.base + delta)); const shift = next.inFrame - c.inFrame; next.start = Math.max(0, c.start + shift); } else if (d.edge === "right") { next.outFrame = Math.max(c.inFrame + 1, d.base + delta); const asset = assets.find(a => a.id === c.sourceId); const max = asset?.type === "image" ? Infinity : Math.round(duration(asset) * fps); next.outFrame = Math.min(next.outFrame, max || next.outFrame); } else { next.start = snapFrame(c.start + delta, c.id); } d.next = clips.map(x => x.id === c.id ? next : x); setDraft(d.next); };
-    const finish = e => { const d = drag.current; if (!d) return; drag.current = null; setDraft(null); try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {} if (d.moved) onChange(d.next); };
-    const tracks = ["V1", "A1"];
-    return jsx("div", { className: "cutdesk-sequence" }, jsx("div", { className: "cutdesk-sequence-title" }, jsx("b", null, "时间轴"), jsx("span", null, `${clips.length} 个片段 · 拖动排列 · 两端裁切`), jsx("label", null, "缩放", jsx("input", { type: "range", min: 25, max: 180, value: zoom, onChange: e => setZoom(num(e.target.value)) })), jsx("button", { type: "button", onClick: () => setSnap(!snap), className: "cutdesk-mini-button" }, snap ? "吸附 开" : "吸附 关")), jsx("div", { className: "cutdesk-timeline-scroll", ref: scroll }, jsx("div", { className: "cutdesk-timeline-inner", style: { width: width + 48 } }, jsx("div", { className: "cutdesk-time-ruler", style: { marginLeft: 48, width }, onPointerDown: e => onSeek(locate(e)) }, Array.from({ length: Math.ceil(width / zoom) + 1 }, (_, i) => jsx("span", { key: i, style: { left: i * zoom } }, tc(i * fps, fps)))), tracks.map(track => jsx("div", { className: "cutdesk-real-track", key: track }, jsx("div", { className: "cutdesk-track-label" }, track), jsx("div", { className: "cutdesk-real-lane", style: { width, backgroundSize: `${zoom}px 100%` }, onPointerDown: e => { if (e.target === e.currentTarget) onSeek(locate(e)); }, onDragOver: e => { e.preventDefault(); }, onDrop: e => { e.preventDefault(); const sourceId = e.dataTransfer.getData("application/x-cutdesk-asset"); if (sourceId) onAdd(sourceId, locate(e), track); } }, shown.filter(c => c.track === track).sort((a, b) => a.start - b.start).map(clip => { const asset = assets.find(a => a.id === clip.sourceId); return jsx("div", { key: clip.id, className: `cutdesk-real-clip ${selectedId === clip.id ? "selected" : ""}`, style: { left: clip.start * px, width: Math.max(22, clipLength(clip) * px) }, onPointerDown: e => begin(e, clip), onPointerMove: move, onPointerUp: finish, onPointerCancel: finish, title: `${asset?.title || "素材"} ${tc(clip.start, fps)} - ${tc(clip.start + clipLength(clip), fps)}` }, jsx("span", { className: "cutdesk-real-handle left", onPointerDown: e => begin(e, clip, "left") }), jsx("span", { className: "cutdesk-clip-body" }, asset?.title || "素材"), jsx("small", null, `${clipLength(clip)}f`), jsx("span", { className: "cutdesk-real-handle right", onPointerDown: e => begin(e, clip, "right") })); }))), jsx("span", { className: "cutdesk-real-playhead", style: { left: 48 + cursor * px } })))));
+  function ToolButton({ active, label, glyph, onClick, disabled }) {
+    return jsx("button", { type: "button", disabled, onClick, className: `cutdesk-tool ${active ? "active" : ""}` }, jsx("i", null, glyph), jsx("span", null, label));
+  }
+
+  function Clip({ node, index, selected, onClick }) {
+    const length = Math.max(18, Math.min(100, durationOf(node) * 9));
+    return jsx("button", { type: "button", onClick, className: `cutdesk-track-clip ${selected ? "selected" : ""}`, style: { width: `${length}px` }, title: node.title },
+      jsx("span", { className: "cutdesk-clip-handle left" }), jsx("span", { className: "cutdesk-clip-body" }, `${index + 1}. ${node.title || "未命名素材"}`), jsx("span", { className: "cutdesk-clip-handle right" }),
+    );
+  }
+
+  function Timeline({ primary, selected, fps, startFrame, endFrame, cursor, onStart, onEnd, onCursor, onClipClick }) {
+    const duration = durationOf(primary);
+    const frames = Math.max(1, Math.round(duration * fps));
+    const startPercent = Math.max(0, Math.min(100, startFrame / frames * 100));
+    const endPercent = Math.max(startPercent, Math.min(100, endFrame / frames * 100));
+    const cursorPercent = Math.max(0, Math.min(100, cursor / Math.max(.001, duration) * 100));
+    const marks = [0, .25, .5, .75, 1];
+    return jsx("div", { className: "cutdesk-timeline" },
+      jsx("div", { className: "cutdesk-ruler" }, marks.map((mark) => jsx("span", { key: mark, style: { left: `${mark * 100}%` } }, timecode(duration * mark)))),
+      jsx("div", { className: "cutdesk-track" },
+        jsx("span", { className: "cutdesk-track-label" }, primary?.type === "audio" ? "A1" : "V1"),
+        jsx("div", { className: "cutdesk-track-lane" },
+          selected.length ? selected.map((node, index) => jsx(Clip, { key: node.id, node, index, selected: node.id === primary?.id, onClick: () => onClipClick(node.id) })) : jsx("span", { className: "cutdesk-track-placeholder" }, "从左侧素材箱选择素材，或将节点连接至剪辑台"),
+          primary ? jsx("div", { className: "cutdesk-selection", style: { left: `${startPercent}%`, width: `${Math.max(1, endPercent - startPercent)}%` } }) : null,
+          primary ? jsx("input", { className: "cutdesk-trim-range start", type: "range", min: 0, max: frames, value: Math.min(startFrame, frames), onChange: (event) => onStart(Math.min(toNumber(event.target.value), Math.max(0, endFrame - 1))) }) : null,
+          primary ? jsx("input", { className: "cutdesk-trim-range end", type: "range", min: 1, max: frames, value: Math.min(Math.max(1, endFrame), frames), onChange: (event) => onEnd(Math.max(toNumber(event.target.value), startFrame + 1)) }) : null,
+          primary ? jsx("input", { className: "cutdesk-cursor-range", type: "range", min: 0, max: Math.max(.001, duration), step: 1 / Math.max(1, fps), value: cursor, onChange: (event) => onCursor(toNumber(event.target.value)) }) : null,
+          primary ? jsx("span", { className: "cutdesk-playhead", style: { left: `${cursorPercent}%` } }) : null,
+        ),
+      ),
+      primary?.type === "video" ? jsx("div", { className: "cutdesk-track audio" }, jsx("span", { className: "cutdesk-track-label" }, "A1"), jsx("div", { className: "cutdesk-track-lane waveform" }, jsx("span", null, "原始音频"))) : null,
+    );
   }
 
   function CutDeskPanel({ ctx, onClose }) {
-    const saved = dataOf(ctx.node); const connected = ctx.getUpstream().filter(isMedia); const [assets, setAssets] = useState(connected); const [fps, setFps] = useState(num(saved.fps, 30));
-    const initial = Array.isArray(saved.clips) ? saved.clips : []; const [clips, setClips] = useState(initial); const [selectedId, setSelectedId] = useState(initial[0]?.id || null); const [cursor, setCursor] = useState(0); const [playing, setPlaying] = useState(false); const [message, setMessage] = useState(""); const preview = useRef(null);
-    useEffect(() => { setAssets(prev => [...connected, ...prev.filter(a => a.id.startsWith("crop-"))]); }, [connected.map(x => x.id).join(",")]);
-    const selected = clips.find(c => c.id === selectedId); const asset = assets.find(a => a.id === selected?.sourceId) || assets[0]; const total = seqEnd(clips); const save = next => ctx.updateMetadata({ pluginData: { ...dataOf(ctx.node), fps, clips: next } });
-    const add = (sourceId, at = total, track) => { const a = assets.find(x => x.id === sourceId); if (!a) return; const targetTrack = track || (a.type === "audio" ? "A1" : "V1"); const length = a.type === "image" ? fps * 5 : Math.max(1, Math.round(duration(a) * fps)); const same = clips.filter(c => c.track === targetTrack); const start = Math.max(0, at || (same.length ? Math.max(...same.map(c => c.start + clipLength(c))) : 0)); const clip = { id: id(), sourceId, track: targetTrack, start, inFrame: 0, outFrame: length }; const next = [...clips, clip]; setClips(next); setSelectedId(clip.id); save(next); setMessage("已加入时间轴，可拖动片段排列或拖动两端裁切"); };
-    const change = next => { setClips(next); save(next); };
-    const createNode = a => ctx.applyOps([{ type: "add_node", id: `media-${id()}`, nodeType: a.type, title: a.title || `${typeName[a.type]}素材`, x: ctx.node.position.x + ctx.node.width + 80, y: ctx.node.position.y, width: a.type === "video" ? 480 : 360, height: a.type === "video" ? 270 : 160, metadata: a.metadata }]);
-    const seek = frame => { setCursor(Math.max(0, Math.min(total, frame))); if (preview.current && preview.current.tagName !== "IMG") preview.current.currentTime = Math.max(0, frame / fps); };
-    const togglePlay = () => { if (!preview.current || preview.current.tagName === "IMG") return; if (preview.current.paused) { void preview.current.play(); setPlaying(true); } else { preview.current.pause(); setPlaying(false); } };
-    const remove = () => { if (!selectedId) return; const next = clips.filter(c => c.id !== selectedId); setClips(next); setSelectedId(next[0]?.id || null); save(next); };
-    const exportTimeline = async () => { if (!clips.length) return setMessage("请先把素材放到时间轴"); const first = assets.find(a => a.id === clips[0].sourceId); if (!first || first.type === "image") return setMessage("图片时间轴暂不能导出视频，请先选择音频或视频素材"); const ordered = clips.filter(c => c.track === (first.type === "audio" ? "A1" : "V1")).sort((a, b) => a.start - b.start); try { setMessage("正在按时间轴顺序导出…"); const sources = ordered.map(c => { const a = assets.find(x => x.id === c.sourceId); return { content: a.metadata.content, storageKey: a.metadata.storageKey, mimeType: a.metadata.mimeType, kind: a.type, startSeconds: c.inFrame / fps, endSeconds: c.outFrame / fps }; }); const blob = await ctx.media.edit({ operation: "concat", sources }); const stored = await ctx.storeMedia(blob, first.type); const outputId = `cutdesk-${id()}`; ctx.applyOps([{ type: "add_node", id: outputId, nodeType: first.type, title: "时间轴导出", x: ctx.node.position.x + ctx.node.width + 72, y: ctx.node.position.y, width: first.type === "video" ? 480 : 360, height: first.type === "video" ? 270 : 160, metadata: stored }, { type: "connect_nodes", fromNodeId: ctx.node.id, toNodeId: outputId }]); setMessage("时间轴已导出为新节点"); } catch (e) { setMessage(e instanceof Error ? e.message : "导出失败"); } };
-    useEffect(() => { if (!preview.current || !asset) return; if (asset.type === "image") return; preview.current.currentTime = 0; }, [asset?.id]);
-    return jsx("div", { className: "cutdesk", "data-canvas-no-zoom": true, onWheelCapture: e => e.stopPropagation() }, jsx("header", { className: "cutdesk-header" }, jsx("div", { className: "cutdesk-brand" }, jsx("i", null, "✂"), jsx("div", null, jsx("b", null, "剪辑台"), jsx("small", null, "可拖动的双轨时间轴"))), jsx("div", { className: "cutdesk-header-center" }, asset ? `${asset.title || "未命名素材"} · ${tc(cursor, fps)}` : "未选择素材"), jsx("button", { type: "button", className: "cutdesk-close", onClick: onClose }, "×")), jsx("main", { className: "cutdesk-workspace" }, jsx("aside", { className: "cutdesk-bin" }, jsx("div", { className: "cutdesk-pane-title" }, "素材箱", jsx("span", null, `${assets.length}`)), jsx("p", null, "点击加入，拖动到轨道，右键创建节点"), jsx("div", { className: "cutdesk-media-list" }, assets.length ? assets.map(a => jsx(MediaItem, { key: a.id, node: a, active: clips.some(c => c.sourceId === a.id), index: clips.findIndex(c => c.sourceId === a.id), onClick: () => add(a.id), onDragStart: (e, n) => { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("application/x-cutdesk-asset", n.id); }, onCreate: createNode })) : jsx("div", { className: "cutdesk-empty" }, "请连接图片、视频或音频节点"))), jsx("section", { className: "cutdesk-viewer" }, jsx("div", { className: "cutdesk-viewer-top" }, jsx("span", null, "节目监看"), jsx("span", null, asset ? `${typeName[asset.type]} · ${tc(cursor, fps)}` : "拖入素材开始")), jsx("div", { className: `cutdesk-preview ${asset?.type || "empty"}` }, asset ? asset.type === "image" ? jsx("img", { src: asset.metadata.content, alt: asset.title || "图片" }) : asset.type === "video" ? jsx("video", { ref: preview, src: asset.metadata.content, controls: false, preload: "metadata", onTimeUpdate: e => setCursor(Math.round(e.currentTarget.currentTime * fps)), onEnded: () => setPlaying(false) }) : jsx("audio", { ref: preview, src: asset.metadata.content, controls: true, onTimeUpdate: e => setCursor(Math.round(e.currentTarget.currentTime * fps)) }) : jsx("div", { className: "cutdesk-no-preview" }, "拖入素材到时间轴")), jsx("div", { className: "cutdesk-transport" }, jsx("button", { type: "button", onClick: () => seek(0) }, "↶"), jsx("button", { type: "button", className: "play", onClick: togglePlay }, playing ? "Ⅱ" : "▶"), jsx("span", null, `${tc(cursor, fps)} / ${tc(total, fps)}`)), jsx("div", { className: "cutdesk-inspector" }, selected ? jsx("div", { className: "cutdesk-inspector-row note" }, jsx("b", null, asset?.title || "片段"), jsx("span", null, `${selected.track} · 入点 ${tc(selected.inFrame, fps)} · 出点 ${tc(selected.outFrame, fps)}`), jsx("button", { type: "button", onClick: remove }, "删除片段")) : jsx("span", null, "选择时间轴片段查看信息"))), jsx("footer", { className: "cutdesk-footer" }, jsx("span", { className: message && !message.includes("已") ? "error" : "" }, message || "所有处理均在浏览器本地完成"), jsx("button", { type: "button", disabled: !clips.length, onClick: exportTimeline }, "导出时间轴"))), jsx(Timeline, { clips, assets, fps, cursor, selectedId, onSelect: setSelectedId, onChange: change, onSeek: seek, onAdd: add }));
+    const saved = pluginData(ctx.node);
+    const connected = ctx.getUpstream().filter(isMedia);
+    const [cropAssets, setCropAssets] = useState(Array.isArray(saved.cropAssets) ? saved.cropAssets : []);
+    const mediaNodes = useMemo(() => [...connected, ...cropAssets], [connected, cropAssets]);
+    const availableIds = useMemo(() => new Set(mediaNodes.map((node) => node.id)), [mediaNodes]);
+    const defaultIds = (Array.isArray(saved.sourceIds) && saved.sourceIds.length ? saved.sourceIds : connected.map((node) => node.id)).filter((id) => availableIds.has(id));
+    const [sourceIds, setSourceIds] = useState(defaultIds);
+    const [operation, setOperation] = useState(saved.operation || (defaultIds.length > 1 ? "concat" : mediaNodes[0]?.type === "image" ? "crop" : "trim"));
+    const [fps, setFps] = useState(toNumber(saved.fps, 30));
+    const [startFrame, setStartFrame] = useState(toNumber(saved.startFrame, 0));
+    const [endFrame, setEndFrame] = useState(toNumber(saved.endFrame, 0));
+    const [cursor, setCursor] = useState(0);
+    const [speed, setSpeed] = useState(toNumber(saved.speed, 1));
+    const [volume, setVolume] = useState(toNumber(saved.volume, 1));
+    const [fadeIn, setFadeIn] = useState(toNumber(saved.fadeIn, 0));
+    const [fadeOut, setFadeOut] = useState(toNumber(saved.fadeOut, 0));
+    const [crop, setCrop] = useState(saved.crop || { left: 0, top: 0, width: 1, height: 1 });
+    const [working, setWorking] = useState(false);
+    const [message, setMessage] = useState("");
+    const previewRef = useRef(null);
+    const selected = useMemo(() => sourceIds.map((id) => mediaNodes.find((node) => node.id === id)).filter(isMedia), [mediaNodes, sourceIds]);
+    const primary = selected[0];
+    const duration = durationOf(primary);
+    const maxFrame = Math.max(1, Math.round(duration * fps));
+    const kind = primary?.type || "video";
+    const startSeconds = startFrame / Math.max(1, fps);
+    const endSeconds = endFrame / Math.max(1, fps);
+    const validConcat = selected.length > 1 && selected.every((node) => node.type === kind);
+    const save = (patch = {}) => ctx.updateMetadata({ pluginData: { ...pluginData(ctx.node), sourceIds, cropAssets, operation, fps, startFrame, endFrame, speed, volume, fadeIn, fadeOut, crop, ...patch } });
+    const createNode = (asset) => ctx.applyOps([{ type: "add_node", id: `media-asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, nodeType: asset.type, title: asset.title || `${typeName[asset.type]}素材`, x: ctx.node.position.x + ctx.node.width + 80, y: ctx.node.position.y, width: asset.type === "image" ? Math.min(480, Math.max(240, (asset.metadata?.naturalWidth || 1) * 240 / Math.max(1, asset.metadata?.naturalHeight || 1))) : asset.type === "video" ? 480 : 360, height: asset.type === "image" ? Math.min(420, Math.max(160, (asset.metadata?.naturalHeight || 1) * 240 / Math.max(1, asset.metadata?.naturalWidth || 1))) : asset.type === "video" ? 270 : 160, metadata: asset.metadata }]);
+
+    useEffect(() => {
+      if (!cropAssets.length) return;
+      let cancelled = false;
+      void Promise.all(cropAssets.map(async (asset) => {
+        if (asset.metadata?.content || !asset.metadata?.storageKey) return asset;
+        try { return { ...asset, metadata: { ...asset.metadata, content: await ctx.media.resolveImage(asset.metadata) } }; } catch { return asset; }
+      })).then((next) => { if (!cancelled && next.some((asset, index) => asset.metadata?.content !== cropAssets[index]?.metadata?.content)) setCropAssets(next); });
+      return () => { cancelled = true; };
+    }, [ctx, cropAssets]);
+    useEffect(() => {
+      if (!primary || endFrame > 0) return;
+      setEndFrame(maxFrame);
+    }, [primary?.id, maxFrame]);
+    useEffect(() => {
+      const element = previewRef.current;
+      if (!element || Math.abs(element.currentTime - cursor) < .08) return;
+      element.currentTime = Math.min(cursor, duration || 0);
+    }, [cursor, duration]);
+
+    const updateSources = (next) => {
+      setSourceIds(next);
+      ctx.updateMetadata({ pluginData: { ...pluginData(ctx.node), sourceIds: next, cropAssets, operation, fps, startFrame, endFrame, speed, volume, fadeIn, fadeOut, crop } });
+      setMessage("");
+    };
+    const toggleSource = (id) => updateSources(sourceIds.includes(id) ? sourceIds.filter((item) => item !== id) : [...sourceIds, id]);
+    const setActiveSource = (id) => {
+      const next = [id, ...sourceIds.filter((item) => item !== id)];
+      updateSources(next);
+      setCursor(0);
+      const active = mediaNodes.find((node) => node.id === id);
+      if (active?.type === "image") setOperation("crop");
+      else if (operation === "crop") setOperation("trim");
+      setEndFrame(Math.max(1, Math.round(durationOf(active) * fps)));
+    };
+    const updateCrop = (key, value) => {
+      const next = { ...crop, [key]: Math.max(0.01, Math.min(1, value)) };
+      if (key === "left") next.left = Math.min(next.left, 1 - next.width);
+      if (key === "top") next.top = Math.min(next.top, 1 - next.height);
+      if (key === "width") next.width = Math.min(next.width, 1 - next.left);
+      if (key === "height") next.height = Math.min(next.height, 1 - next.top);
+      setCrop(next);
+      save({ crop: next });
+    };
+    const chooseOperation = (value) => {
+      setOperation(value);
+      ctx.updateMetadata({ pluginData: { ...pluginData(ctx.node), sourceIds, cropAssets, operation: value, fps, startFrame, endFrame, speed, volume, fadeIn, fadeOut, crop } });
+      setMessage("");
+    };
+    const play = () => {
+      const element = previewRef.current;
+      if (!element) return;
+      if (element.paused) void element.play(); else element.pause();
+    };
+    const run = async () => {
+      setMessage("");
+      if (!selected.length) return setMessage("请先从素材箱选择已连线的素材。");
+      if (operation === "crop" && kind !== "image") return setMessage("图片裁剪只能用于图片素材。");
+      if (operation === "concat" && (!validConcat || !selected.every(isAudioVideo))) return setMessage("拼接需要两个及以上相同类型的音频或视频素材。");
+      if (operation === "trim" && (!(endFrame > startFrame) || !selected.every(isAudioVideo))) return setMessage("请在时间轴上拉开有效的截取区间，并选择音频或视频素材。");
+      if (["extract-audio", "mute", "video-speed"].includes(operation) && kind !== "video") return setMessage("此工具仅适用于视频素材。");
+      try {
+        setWorking(true);
+        if (operation === "crop") {
+          const blob = await ctx.media.cropImage({ content: primary.metadata.content, storageKey: primary.metadata.storageKey }, crop);
+          const stored = await ctx.storeImage(blob);
+          const cropId = `crop-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const asset = { id: cropId, type: "image", title: `裁剪 · ${primary.title || "图片"}`, metadata: stored };
+          const nextAssets = [...cropAssets, asset];
+          setCropAssets(nextAssets);
+          setSourceIds([...sourceIds, cropId]);
+          save({ cropAssets: nextAssets, sourceIds: [...sourceIds, cropId], lastCropId: cropId });
+          setMessage("裁剪完成，已加入素材箱和时间轴；右键该素材可创建图片节点。");
+          return;
+        }
+        const blob = await ctx.media.edit({ operation, sources: selected.map((node) => ({ content: node.metadata.content, storageKey: node.metadata.storageKey, mimeType: node.metadata.mimeType, kind: node.type })), startSeconds, endSeconds: operation === "trim" || operation === "audio-adjust" ? endSeconds : undefined, speed, volume, fadeInSeconds: fadeIn, fadeOutSeconds: fadeOut });
+        const outputKind = operation === "extract-audio" || (operation !== "concat" && kind === "audio") ? "audio" : kind;
+        const stored = await ctx.storeMedia(blob, outputKind);
+        const outputId = `cutdesk-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        ctx.applyOps([
+          { type: "add_node", id: outputId, nodeType: outputKind, title: `${names[operation]} · ${primary.title || typeName[outputKind]}`, x: ctx.node.position.x + ctx.node.width + 72, y: ctx.node.position.y, width: outputKind === "video" ? 480 : 360, height: outputKind === "video" ? 270 : 160, metadata: { ...stored, pluginData: { editorOperation: operation, sourceIds } } },
+          { type: "connect_nodes", fromNodeId: ctx.node.id, toNodeId: outputId },
+        ]);
+        save({ lastOutputId: outputId });
+        setMessage("已完成，结果节点已添加到剪辑台右侧。");
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "处理失败，请检查素材格式后重试。");
+      } finally { setWorking(false); }
+    };
+    const tools = kind === "image" ? [["crop", "裁剪", icon("cut")]] : kind === "audio" ? [["trim", "截取", icon("cut")], ["concat", "拼接", icon("join")], ["audio-adjust", "音量", icon("audio")]] : [["trim", "截取", icon("cut")], ["concat", "拼接", icon("join")], ["extract-audio", "提取音频", icon("audio")], ["mute", "静音", icon("mute")], ["video-speed", "变速", icon("speed")]];
+    const noticeIsError = message && !message.startsWith("已完成");
+
+    return jsx("div", { className: "cutdesk", "data-canvas-no-zoom": true, onWheelCapture: (event) => event.stopPropagation() },
+      jsx("header", { className: "cutdesk-header" }, jsx("div", { className: "cutdesk-brand" }, jsx("i", null, icon("cut")), jsx("div", null, jsx("b", null, "剪辑台"), jsx("small", null, "本地音频 · 视频编辑"))), jsx("div", { className: "cutdesk-header-center" }, primary ? `${primary.title || "未命名序列"}  ·  ${timecode(cursor)}` : "未打开素材"), jsx("button", { type: "button", className: "cutdesk-close", onClick: onClose, title: "关闭" }, icon("close"))),
+      jsx("main", { className: "cutdesk-workspace" },
+        jsx("aside", { className: "cutdesk-bin" }, jsx("div", { className: "cutdesk-pane-title" }, "素材箱", jsx("span", null, `${mediaNodes.length}`)), jsx("p", null, "点击加入序列；点击时间轴片段可设为预览主素材。"), jsx("div", { className: "cutdesk-media-list" }, mediaNodes.length ? mediaNodes.map((node) => jsx(MediaBinItem, { key: node.id, node, active: sourceIds.includes(node.id), index: sourceIds.indexOf(node.id), onClick: () => toggleSource(node.id), onCreateNode: createNode })) : jsx("div", { className: "cutdesk-empty" }, "暂无已连线素材"))),
+        jsx("section", { className: "cutdesk-viewer" },
+          jsx("div", { className: "cutdesk-viewer-top" }, jsx("span", null, "节目监看"), jsx("span", null, primary ? `${typeName[kind]} · ${timecode(duration)}` : "选择一段素材")),
+          jsx("div", { className: `cutdesk-preview ${kind}` }, primary ? (kind === "image" ? jsx("img", { src: primary.metadata.content, alt: primary.title || "图片素材" }) : kind === "video" ? jsx("video", { ref: previewRef, src: primary.metadata.content, preload: "metadata", onTimeUpdate: (event) => setCursor(event.currentTarget.currentTime), onEnded: () => setCursor(0) }) : jsx("div", { className: "cutdesk-audio-preview" }, jsx("span", null, icon("audio")), jsx("div", { className: "cutdesk-audio-wave" }, Array.from({ length: 50 }).map((_, index) => jsx("i", { key: index, style: { height: `${20 + (index * 37 % 66)}%` } }))), jsx("audio", { ref: previewRef, src: primary.metadata.content, preload: "metadata", onTimeUpdate: (event) => setCursor(event.currentTarget.currentTime), onEnded: () => setCursor(0) }))) : jsx("div", { className: "cutdesk-no-preview" }, jsx("i", null, icon("video")), jsx("span", null, "从素材箱选择素材开始"))),
+          jsx("div", { className: "cutdesk-transport" }, jsx("button", { type: "button", onClick: () => { setCursor(0); if (previewRef.current) previewRef.current.currentTime = 0; } }, icon("back")), jsx("button", { type: "button", className: "play", onClick: play }, icon("play")), jsx("span", null, `${timecode(cursor)} / ${timecode(duration)}`)),
+          jsx("div", { className: "cutdesk-toolstrip" }, tools.map(([value, label, glyph]) => jsx(ToolButton, { key: value, active: operation === value, label, glyph, onClick: () => chooseOperation(value), disabled: !primary })),),
+          jsx("div", { className: "cutdesk-inspector" },
+            operation === "trim" ? jsx("div", { className: "cutdesk-inspector-row" }, jsx("label", null, "帧率", jsx("select", { value: fps, onChange: (event) => { const value = toNumber(event.target.value, 30); setFps(value); save({ fps: value }); } }, [24, 25, 30, 50, 60].map((value) => jsx("option", { key: value, value }, `${value} FPS`)))), jsx("label", null, "起始", jsx("b", null, `${startFrame} 帧 / ${timecode(startSeconds)}`)), jsx("label", null, "结束", jsx("b", null, `${endFrame} 帧 / ${timecode(endSeconds)}`)), jsx("small", null, "时间轴截取将按所选帧率精确重编码")) : null,
+            operation === "crop" ? jsx("div", { className: "cutdesk-inspector-row controls crop" }, ["left", "top", "width", "height"].map((key) => jsx("label", { key }, key === "left" ? "左" : key === "top" ? "上" : key === "width" ? "宽" : "高", jsx("input", { type: "number", min: 0.01, max: 1, step: 0.01, value: crop[key], onChange: (event) => updateCrop(key, toNumber(event.target.value, crop[key])) }))), jsx("span", null, "范围 0–1")) : null,
+            operation === "concat" ? jsx("div", { className: "cutdesk-inspector-row note" }, jsx("b", null, "无损直接拼接"), jsx("span", null, "保持原编码，要求选中的素材具有相同类型、分辨率和编码参数。")) : null,
+            operation === "audio-adjust" ? jsx("div", { className: "cutdesk-inspector-row controls" }, jsx("label", null, "音量", jsx("input", { type: "range", min: 0, max: 2, step: .05, value: volume, onChange: (event) => setVolume(toNumber(event.target.value, 1)) }), `${Math.round(volume * 100)}%`), jsx("label", null, "淡入", jsx("input", { type: "number", min: 0, step: .1, value: fadeIn, onChange: (event) => setFadeIn(Math.max(0, toNumber(event.target.value))) }), "秒"), jsx("label", null, "淡出", jsx("input", { type: "number", min: 0, step: .1, value: fadeOut, onChange: (event) => setFadeOut(Math.max(0, toNumber(event.target.value))) }), "秒")) : null,
+            operation === "video-speed" ? jsx("div", { className: "cutdesk-inspector-row controls" }, jsx("label", null, "播放速度", jsx("select", { value: speed, onChange: (event) => setSpeed(toNumber(event.target.value, 1)) }, [[.5, "0.5× 慢放"], [.75, "0.75×"], [1, "1× 原速"], [1.25, "1.25×"], [1.5, "1.5×"], [2, "2× 快放"]].map(([value, label]) => jsx("option", { key: value, value }, label)))), jsx("span", null, "会同步调整视频和原始音频")) : null,
+            ["extract-audio", "mute"].includes(operation) ? jsx("div", { className: "cutdesk-inspector-row note" }, jsx("b", null, operation === "mute" ? "导出无声视频" : "导出 MP3 音轨"), jsx("span", null, "原始素材不会被修改，处理结果将作为新节点添加。")) : null,
+          ),
+        ),
+      ),
+      jsx("footer", { className: "cutdesk-footer" }, jsx("span", { className: noticeIsError ? "error" : "" }, message || (working ? "正在调用本地剪辑引擎…" : "所有处理均在当前浏览器完成")), jsx("div", null, jsx("span", null, "首次处理需加载约 31 MB 引擎"), jsx("button", { type: "button", disabled: working || !primary, onClick: run }, working ? "处理中…" : `导出${operation === "crop" ? "裁剪素材" : operation === "extract-audio" ? "音频" : "结果"}`))),
+      jsx("section", { className: "cutdesk-sequence" }, jsx("div", { className: "cutdesk-sequence-title" }, jsx("b", null, "时间轴"), jsx("span", null, primary ? `${fps} FPS · ${selected.length} 段素材` : "选择素材后开始编辑")), jsx(Timeline, { primary, selected, fps, startFrame, endFrame: endFrame || maxFrame, cursor, onStart: setStartFrame, onEnd: setEndFrame, onCursor: setCursor, onClipClick: setActiveSource })),
+    );
   }
-  return { id: "media-editor", name: "音频视频剪辑台", version: "3.0.0", description: "黑色双轨时间轴剪辑台，支持拖动排列、帧级裁切和素材导出。", autoEnable: true, css: `
-.cutdesk{width:min(1120px,calc(100vw - 24px));max-height:calc(100vh - 16px);overflow:auto;background:#171513;color:#e7e5e4;border:1px solid #3a3530;border-radius:10px;box-shadow:0 20px 70px #000b;font:12px ui-sans-serif,system-ui,sans-serif}.cutdesk button{font:inherit}.cutdesk-header{height:56px;display:grid;grid-template-columns:220px 1fr 36px;align-items:center;padding:0 14px;border-bottom:1px solid #35302b;background:#201d1a}.cutdesk-brand,.cutdesk-brand>div{display:flex;align-items:center;gap:9px}.cutdesk-brand i{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#39332e;font-style:normal}.cutdesk-brand b{display:block;font-size:13px}.cutdesk-brand small{display:block;color:#8f8983;font-size:10px}.cutdesk-header-center{text-align:center;color:#aaa39d;font-family:ui-monospace,monospace;font-size:11px}.cutdesk-close{border:0;background:none;color:#aaa39d;font-size:21px;cursor:pointer}.cutdesk-workspace{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:430px}.cutdesk-bin{padding:14px;border-right:1px solid #35302b;background:#1d1a18}.cutdesk-pane-title{display:flex;justify-content:space-between;margin-bottom:5px;font-weight:700}.cutdesk-pane-title span{color:#8f8983;font-weight:400}.cutdesk-bin p{margin:0 0 12px;color:#817a74;font-size:10px;line-height:1.5}.cutdesk-media-list{display:grid;gap:5px;align-content:start}.cutdesk-media-item{position:relative;display:flex;align-items:center;gap:8px;width:100%;height:46px;padding:6px;border:1px solid #38322d;border-radius:6px;background:#28231f;color:#d6d3d1;text-align:left;cursor:grab;overflow:hidden}.cutdesk-media-item:hover,.cutdesk-media-item.active{border-color:#a8a29e;background:#342e29}.cutdesk-media-thumb{display:grid;place-items:center;width:28px;height:28px;border-radius:5px;background:#191715;color:#b8b1ab;font-size:14px;flex:none}.cutdesk-media-copy{min-width:0;display:grid}.cutdesk-media-copy b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:600}.cutdesk-media-copy small{color:#8f8983;font-size:9px}.cutdesk-media-order{margin-left:auto;display:grid;place-items:center;width:15px;height:15px;border-radius:50%;background:#ddd8d2;color:#1c1917;font-size:9px}.cutdesk-viewer{display:grid;grid-template-rows:auto minmax(0,360px) 44px auto;padding:14px 16px 0;background:#100f0e}.cutdesk-viewer-top{display:flex;justify-content:space-between;margin-bottom:9px;color:#aaa39d;font-size:10px}.cutdesk-preview{display:grid;place-items:center;min-width:0;min-height:0;max-width:680px;width:100%;height:360px;justify-self:center;overflow:hidden;border:1px solid #35302b;border-radius:7px;background:#080807}.cutdesk-preview video,.cutdesk-preview img{display:block;width:100%;height:100%;object-fit:contain}.cutdesk-preview audio{width:85%}.cutdesk-no-preview{color:#706963}.cutdesk-transport{display:flex;justify-content:center;align-items:center;gap:10px}.cutdesk-transport button{border:0;background:none;color:#ccc5bf;cursor:pointer}.cutdesk-transport .play{width:28px;height:28px;border-radius:50%;background:#e7e5e4;color:#201d1a}.cutdesk-transport span{min-width:145px;color:#aaa39d;text-align:center;font:10px ui-monospace,monospace}.cutdesk-inspector{min-height:34px;color:#8f8983;font-size:10px}.cutdesk-inspector-row{display:flex;align-items:center;gap:9px}.cutdesk-inspector-row b{color:#e7e5e4}.cutdesk-inspector-row span{margin-right:auto}.cutdesk-inspector-row button,.cutdesk-mini-button{border:1px solid #4a433c;border-radius:4px;background:#29241f;color:#c9c2bc;padding:4px 7px;cursor:pointer}.cutdesk-footer{display:flex;align-items:center;justify-content:space-between;min-height:46px;padding:0 14px;border-top:1px solid #35302b;background:#201d1a;color:#8f8983;font-size:10px}.cutdesk-footer button{border:0;border-radius:5px;background:#e7e5e4;color:#201d1a;padding:7px 11px;font-weight:700;cursor:pointer}.cutdesk-footer button:disabled{opacity:.4}.cutdesk-sequence{border-top:1px solid #35302b;background:#181614;padding:11px 14px 14px}.cutdesk-sequence-title{display:flex;align-items:center;gap:10px;margin-bottom:8px;color:#c9c2bc}.cutdesk-sequence-title span{margin-right:auto;color:#817a74;font-size:10px}.cutdesk-sequence-title label{display:flex;align-items:center;gap:5px;color:#817a74;font-size:10px}.cutdesk-sequence-title input{width:70px;accent-color:#d6d3d1}.cutdesk-timeline-scroll{overflow-x:auto;border:1px solid #3a3530;border-radius:6px;background:#0d0c0b}.cutdesk-timeline-inner{position:relative;padding-bottom:5px}.cutdesk-time-ruler{position:relative;height:24px;border-bottom:1px solid #35302b;background:#211e1b;cursor:crosshair}.cutdesk-time-ruler span{position:absolute;top:6px;transform:translateX(-50%);color:#817a74;font:9px ui-monospace,monospace;white-space:nowrap}.cutdesk-real-track{display:grid;grid-template-columns:48px auto;min-height:48px;border-bottom:1px solid #292522}.cutdesk-track-label{display:grid;place-items:center;border-right:1px solid #35302b;background:#28231f;color:#a8a29e;font-size:10px;font-weight:700}.cutdesk-real-lane{position:relative;min-height:47px;background:repeating-linear-gradient(90deg,#11100f 0,#11100f calc(var(--grid,30px) - 1px),#292522 var(--grid,30px));background-image:repeating-linear-gradient(90deg,#11100f 0,#11100f calc(var(--grid-size,70px) - 1px),#292522 var(--grid-size,70px));cursor:crosshair}.cutdesk-track-placeholder{position:absolute;left:12px;top:17px;color:#625c56;font-size:10px}.cutdesk-real-clip{position:absolute;top:7px;height:33px;display:flex;align-items:center;border:1px solid #8c8176;border-radius:4px;background:linear-gradient(90deg,#51483f,#71655a);color:#f4f2ef;cursor:grab;overflow:hidden;user-select:none}.cutdesk-real-clip.selected{border-color:#fff;box-shadow:0 0 0 1px #d6d3d1}.cutdesk-real-handle{z-index:2;width:6px;height:100%;background:#d6d3d1;cursor:ew-resize;flex:none}.cutdesk-clip-body{padding:0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px}.cutdesk-real-clip small{margin-left:auto;padding-right:5px;color:#d6d3d1;font-size:8px}.cutdesk-real-playhead{position:absolute;top:24px;bottom:5px;width:1px;background:#f5f5f4;pointer-events:none;z-index:10}.cutdesk-real-playhead:before{content:"";position:absolute;top:-3px;left:-4px;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #f5f5f4}.cutdesk-mini-button{padding:3px 6px;font-size:9px}@media(max-width:760px){.cutdesk{width:calc(100vw - 12px)}.cutdesk-workspace{display:block}.cutdesk-bin{border:0;border-bottom:1px solid #35302b}.cutdesk-media-list{display:flex;overflow:auto}.cutdesk-media-item{min-width:170px}.cutdesk-viewer{height:350px}.cutdesk-preview{height:280px}.cutdesk-header{grid-template-columns:1fr 34px}.cutdesk-header-center{display:none}}
-`, nodes: [{ type: "media-editor:editor", title: "音频视频剪辑台", icon: "✂", description: "可拖动排列的双轨时间轴剪辑台。", defaultSize: { width: 360, height: 130 }, minimapColor: "#f5f5f4", autoOpenPanel: true, Content: EditorContent, Panel: CutDeskPanel }] };
+
+  return {
+    id: "media-editor",
+    name: "音频视频剪辑台",
+    version: "2.2.2",
+    description: "黑色时间轴剪辑台：本地按帧截取、拼接、静音、提取音频和音视频调整。",
+    autoEnable: true,
+    css: `
+      .cutdesk-node{width:100%;height:100%;min-width:0;box-sizing:border-box;border-radius:inherit;overflow:hidden;display:flex;align-items:center;gap:12px;padding:18px 20px;background:#292524;color:#f5f5f4;font-family:ui-sans-serif,system-ui,sans-serif}.cutdesk-node-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#3a3631;color:#f5f5f4;font-size:20px}.cutdesk-node-copy{display:grid;min-width:0;gap:4px}.cutdesk-node-copy strong{font-size:14px}.cutdesk-node-copy span{overflow:hidden;color:#a8a29e;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.cutdesk-node-open{margin-left:auto;border:1px solid #57534e;border-radius:7px;background:#292524;padding:6px 11px;color:#e7e5e4;font-size:12px;cursor:pointer}.cutdesk{width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 16px);overflow-x:hidden;overflow-y:auto;border:1px solid #44403c;border-radius:14px;background:#181715;color:#f5f5f4;box-shadow:0 26px 80px #0008;font-family:ui-sans-serif,system-ui,sans-serif}.cutdesk,.cutdesk *{box-sizing:border-box}.cutdesk button,.cutdesk select,.cutdesk input{font:inherit}.cutdesk-header{height:52px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 15px;border-bottom:1px solid #35312d;background:#1f1d1a}.cutdesk-brand{display:flex;align-items:center;gap:9px}.cutdesk-brand>i{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;background:#3a3631;color:#fafaf9;font-style:normal}.cutdesk-brand b{display:block;font-size:13px}.cutdesk-brand small{display:block;margin-top:1px;color:#a8a29e;font-size:10px}.cutdesk-header-center{color:#d6d3d1;font-size:11px}.cutdesk-close{justify-self:end;width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:#d6d3d1;font-size:19px;cursor:pointer}.cutdesk-close:hover{background:#35312d;color:#fff}.cutdesk-workspace{display:grid;grid-template-columns:196px minmax(0,1fr);height:530px;min-height:0;overflow:hidden}.cutdesk-bin{min-height:0;overflow:hidden;border-right:1px solid #35312d;background:#181715;padding:13px}.cutdesk-pane-title,.cutdesk-viewer-top,.cutdesk-sequence-title{display:flex;align-items:center;justify-content:space-between;color:#e7e5e4;font-size:12px;font-weight:700}.cutdesk-pane-title span{display:grid;min-width:18px;place-items:center;border-radius:9px;background:#3a3631;color:#d6d3d1;font-size:10px}.cutdesk-bin>p{margin:7px 0 13px;color:#a8a29e;font-size:10px;line-height:1.5}.cutdesk-media-list{display:grid;align-content:start;grid-auto-rows:42px;gap:7px;height:calc(100% - 62px);overflow:auto}.cutdesk-media-item{position:relative;display:grid;align-items:center;grid-template-columns:25px minmax(0,1fr);gap:6px;width:100%;height:42px;min-height:42px;max-height:42px;overflow:hidden;padding:4px 5px;border:1px solid transparent;border-radius:6px;background:transparent;color:#e7e5e4;text-align:left;cursor:pointer}.cutdesk-media-item:hover{background:#292524}.cutdesk-media-item.active{border-color:#78716c;background:#3a3631}.cutdesk-media-thumb{display:grid;height:25px;place-items:center;border-radius:6px;background:#3a3631;color:#f5f5f4;font-size:14px}.cutdesk-media-copy{min-width:0}.cutdesk-media-copy b,.cutdesk-media-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cutdesk-media-copy b{font-size:10px;font-weight:600}.cutdesk-media-copy small{margin-top:1px;color:#a8a29e;font-size:8px}.cutdesk-media-order{position:absolute;right:5px;top:5px;display:grid;width:14px;height:14px;place-items:center;border-radius:50%;background:#f5f5f4;color:#151515;font-size:9px;font-weight:800}.cutdesk-empty{padding:16px 5px;color:#78716c;font-size:11px;text-align:center}.cutdesk-viewer{min-width:0;min-height:0;height:530px;display:grid;grid-template-rows:auto minmax(0,420px) auto auto;padding:14px 16px 0;background:#0f0e0d}.cutdesk-viewer-top{margin:0 2px 10px;color:#a8a29e;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}.cutdesk-preview{position:relative;display:grid;width:100%;height:100%;min-height:0;max-width:680px;max-height:420px;justify-self:center;place-items:center;overflow:hidden;border:1px solid #35312d;border-radius:8px;background:#0c0a09}.cutdesk-preview video,.cutdesk-preview img{display:block;width:100%;height:100%;max-width:100%;max-height:420px;object-fit:contain}.cutdesk-no-preview{display:grid;place-items:center;gap:10px;color:#78716c;font-size:12px}.cutdesk-no-preview i{display:grid;width:42px;height:42px;place-items:center;border:1px solid #35312d;border-radius:12px;color:#a8a29e;font-size:21px;font-style:normal}.cutdesk-audio-preview{display:grid;width:72%;place-items:center;gap:17px}.cutdesk-audio-preview>span{display:grid;width:48px;height:48px;place-items:center;border-radius:50%;background:#292524;color:#fafaf9;font-size:23px}.cutdesk-audio-wave{display:flex;height:84px;width:100%;align-items:center;justify-content:center;gap:3px}.cutdesk-audio-wave i{width:3px;border-radius:4px;background:linear-gradient(#fafaf9,#cc7540);opacity:.8}.cutdesk-audio-preview audio{width:100%}.cutdesk-transport{display:flex;align-items:center;justify-content:center;gap:10px;height:43px}.cutdesk-transport button{display:grid;width:27px;height:27px;place-items:center;border:0;border-radius:6px;background:transparent;color:#d6d3d1;cursor:pointer}.cutdesk-transport button:hover{background:#35312d;color:#fff}.cutdesk-transport .play{background:#f5f5f4;color:#1f1d1a}.cutdesk-transport span{min-width:112px;color:#a8a29e;font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;text-align:center}.cutdesk-toolstrip{display:flex;justify-content:center;gap:4px;padding-bottom:13px}.cutdesk-tool{display:flex;align-items:center;gap:5px;border:1px solid transparent;border-radius:6px;background:transparent;padding:6px 8px;color:#a8a29e;font-size:10px;cursor:pointer}.cutdesk-tool:hover{background:#292524;color:#f5f5f4}.cutdesk-tool.active{border-color:#78716c;background:#3a3631;color:#fafaf9}.cutdesk-tool:disabled{opacity:.35;cursor:not-allowed}.cutdesk-tool i{font-size:14px;font-style:normal}.cutdesk-inspector{min-height:54px;border-top:1px solid #35312d;padding:10px 1px}.cutdesk-inspector-row{display:flex;align-items:center;gap:14px;color:#d6d3d1;font-size:10px}.cutdesk-inspector-row label{display:flex;align-items:center;gap:6px;color:#a8a29e}.cutdesk-inspector-row label b{color:#e7e5e4;font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;font-weight:500}.cutdesk-inspector-row select,.cutdesk-inspector-row input[type=number]{border:1px solid #44403c;border-radius:5px;background:#292524;padding:4px 6px;color:#f5f5f4;font-size:10px}.cutdesk-inspector-row input[type=range]{width:90px;accent-color:#f5f5f4}.cutdesk-inspector-row small{margin-left:auto;color:#78716c;font-size:10px}.cutdesk-inspector-row.note b{color:#f5f5f4}.cutdesk-inspector-row.note span{color:#a8a29e}.cutdesk-inspector-row.controls label{color:#d6d3d1}.cutdesk-footer{display:flex;justify-content:space-between;align-items:center;min-height:48px;padding:0 16px;border-top:1px solid #35312d;background:#1f1d1a;color:#a8a29e;font-size:10px}.cutdesk-footer .error{color:#ed7772}.cutdesk-footer>div{display:flex;align-items:center;gap:12px}.cutdesk-footer button{border:0;border-radius:6px;background:#f5f5f4;padding:8px 13px;color:#1c1917;font-size:11px;font-weight:800;cursor:pointer}.cutdesk-footer button:disabled{opacity:.45;cursor:not-allowed}.cutdesk-sequence{border-top:1px solid #44403c;background:#181715;padding:10px 16px 14px}.cutdesk-sequence-title{margin-bottom:8px;color:#d6d3d1;font-size:11px}.cutdesk-sequence-title span{color:#78716c;font-size:10px;font-weight:400}.cutdesk-timeline{position:relative;overflow:hidden;border:1px solid #44403c;border-radius:7px;background:#0f0e0d}.cutdesk-ruler{position:relative;height:22px;border-bottom:1px solid #35312d;background:#1f1d1a}.cutdesk-ruler span{position:absolute;top:5px;color:#78716c;font-family:ui-monospace,SFMono-Regular,monospace;font-size:9px;transform:translateX(-50%)}.cutdesk-ruler span:first-child{transform:none}.cutdesk-ruler span:last-child{transform:translateX(-100%)}.cutdesk-track{display:grid;grid-template-columns:34px minmax(0,1fr);min-height:47px;border-bottom:1px solid #35312d}.cutdesk-track.audio{min-height:31px;border-bottom:0}.cutdesk-track-label{display:grid;place-items:center;border-right:1px solid #35312d;background:#292524;color:#a8a29e;font-size:10px;font-weight:700}.cutdesk-track-lane{position:relative;display:flex;align-items:center;gap:4px;min-width:0;padding:5px 8px;overflow:hidden;background:repeating-linear-gradient(90deg,#151412 0,#151412 29px,#1f1d1a 30px)}.cutdesk-track-lane.waveform{background:repeating-linear-gradient(90deg,#181715 0,#181715 29px,#292524 30px)}.cutdesk-track-lane.waveform span{height:18px;width:100%;border-radius:3px;background:repeating-linear-gradient(90deg,#57534e 0,#57534e 2px,transparent 3px,transparent 6px);opacity:.55;color:#a8a29e;font-size:9px;line-height:18px;padding-left:7px}.cutdesk-track-placeholder{color:#78716c;font-size:10px}.cutdesk-track-clip{position:relative;z-index:3;display:flex;align-items:center;min-width:18px;height:30px;border:1px solid #78716c;border-radius:4px;background:linear-gradient(90deg,#3a3631,#57534e);padding:0;color:#f5f5f4;cursor:pointer;overflow:hidden}.cutdesk-track-clip.selected{border-color:#fafaf9;box-shadow:inset 0 0 0 1px #fafaf9}.cutdesk-clip-body{overflow:hidden;padding:0 5px;text-overflow:ellipsis;white-space:nowrap;font-size:9px}.cutdesk-clip-handle{position:absolute;z-index:2;width:4px;height:100%;background:#d6d3d1}.cutdesk-clip-handle.left{left:0}.cutdesk-clip-handle.right{right:0}.cutdesk-selection{position:absolute;z-index:4;top:2px;bottom:2px;border:1px solid #fafaf9;background:#fafaf915;pointer-events:none}.cutdesk-trim-range{position:absolute;z-index:6;left:0;top:0;width:100%;height:100%;margin:0;opacity:0;cursor:ew-resize}.cutdesk-trim-range.end{z-index:5}.cutdesk-cursor-range{position:absolute;z-index:7;left:0;top:0;width:100%;height:100%;margin:0;opacity:0;cursor:ew-resize}.cutdesk-playhead{position:absolute;z-index:8;top:0;bottom:0;width:1px;background:#fafaf9;pointer-events:none}.cutdesk-playhead:before{content:"";position:absolute;top:0;left:-4px;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #fafaf9}@media(max-width:760px){.cutdesk{width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto}.cutdesk-workspace{grid-template-columns:1fr;height:auto;overflow:visible}.cutdesk-bin{border-right:0;border-bottom:1px solid #35312d}.cutdesk-media-list{display:flex;max-height:88px;overflow-x:auto}.cutdesk-media-item{min-width:155px}.cutdesk-viewer{height:auto;min-height:0;grid-template-rows:auto 320px auto auto}.cutdesk-preview{height:320px;min-height:0;max-height:320px}.cutdesk-preview video,.cutdesk-preview img{max-height:320px}.cutdesk-header-center{display:none}.cutdesk-header{grid-template-columns:1fr auto}.cutdesk-footer>div>span{display:none}.cutdesk-inspector-row{flex-wrap:wrap}.cutdesk-inspector-row small{margin-left:0;width:100%}}
+    `,
+    nodes: [{ type: "media-editor:editor", title: "音频视频剪辑台", icon: "✂", description: "黑色时间轴剪辑台，支持按帧截取、拼接与常用音视频处理。", defaultSize: { width: 360, height: 130 }, minimapColor: "#f5f5f4", autoOpenPanel: true, Content: EditorContent, Panel: CutDeskPanel }],
+  };
 }
