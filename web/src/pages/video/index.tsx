@@ -737,7 +737,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         videoWatermark: log.config?.videoWatermark || "false",
         videoUseContextIr: log.config?.videoUseContextIr || "false",
         videoSkillId: log.config?.videoSkillId || "",
-        videoSeed: log.config?.videoSeed || "",
+        videoSeed: log.config?.videoSeed || "random",
     };
 }
 

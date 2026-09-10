@@ -126,7 +126,11 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ) : null}
                         {pluginSettings?.seed ? (
                             <SettingGroup title="随机种子" color={theme.node.muted}>
-                                <input inputMode="numeric" className="h-9 w-full rounded-xl border bg-transparent px-3 text-sm outline-none" style={{ borderColor: theme.node.stroke, color: theme.node.text }} value={config.videoSeed} placeholder="选填，整数；留空为随机" onChange={(event) => onConfigChange("videoSeed", event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+                                <div className="grid grid-cols-2 gap-2.5">
+                                    <OptionPill selected={!/^\d+$/.test(config.videoSeed) || Number(config.videoSeed) < 1} theme={theme} onClick={() => onConfigChange("videoSeed", "random")}>每次随机</OptionPill>
+                                    <OptionPill selected={/^\d+$/.test(config.videoSeed) && Number(config.videoSeed) >= 1} theme={theme} onClick={() => onConfigChange("videoSeed", /^\d+$/.test(config.videoSeed) && Number(config.videoSeed) >= 1 ? config.videoSeed : "1")}>固定</OptionPill>
+                                </div>
+                                {/^\d+$/.test(config.videoSeed) && Number(config.videoSeed) >= 1 ? <input inputMode="numeric" min="1" className="mt-2.5 h-9 w-full rounded-xl border bg-transparent px-3 text-sm outline-none" style={{ borderColor: theme.node.stroke, color: theme.node.text }} value={config.videoSeed} placeholder="请输入大于 0 的整数" onChange={(event) => onConfigChange("videoSeed", event.target.value.replace(/\D/g, ""))} onMouseDown={(event) => event.stopPropagation()} /> : <div className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>每次生成都会创建一个新的正整数 Seed。</div>}
                             </SettingGroup>
                         ) : null}
                     </>

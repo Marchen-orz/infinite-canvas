@@ -17,26 +17,39 @@ export default function createAutoDlComfyUiPlugin() {
     } catch { return url; }
   };
   const firstLastMarker = "AutoDL ComfyUI MiniMax H3 first-and-last-frame video API.";
+  const seedMarker = "AutoDL ComfyUI seed handling v1.3.0.";
+  const seedScript = String.raw`// AutoDL ComfyUI seed handling v1.3.0.
+const normalizedSeed = String(params.seed || "random").trim();
+if (normalizedSeed !== "random" && !/^[1-9]\d*$/.test(normalizedSeed)) throw new Error("固定 Seed 必须是大于 0 的整数。");
+const seed = /^[1-9]\d*$/.test(normalizedSeed) ? Number(normalizedSeed) : Math.floor(Math.random() * 2147483647) + 1;
+`;
   const upgradeFirstLastTemplate = (script) => {
-    if (!script.includes(firstLastMarker) || script.includes("AutoDL MiniMax H3 first-and-last-frame template v1.2.0.")) return script;
-    const frames = String.raw`const imageUrls = Array.isArray(params.refImageUrls) ? params.refImageUrls : [];
+    if (script.includes(seedMarker)) return script;
+    const withSeed = script.replace(/(const headers = [^\n]+;\n)/, `$1${seedScript}`);
+    if (script.includes(firstLastMarker)) {
+      const frames = String.raw`const imageUrls = Array.isArray(params.refImageUrls) ? params.refImageUrls : [];
 const imageDataUrls = Array.isArray(params.refImagesDataUrls) ? params.refImagesDataUrls : images;
 const frameSource = (index) => String(imageUrls[index] || imageDataUrls[index] || "").replace(/\s/g, "");
 const firstFrame = frameSource(0);
 const lastFrame = frameSource(1);
 const validFrame = (value) => /^https?:\/\//i.test(value) || /^data:image\/(?:png|jpe?g|webp);base64,/i.test(value);
-if (!validFrame(firstFrame) || !validFrame(lastFrame)) {
-  throw new Error("首尾帧模板需要按顺序连接两张 JPG、PNG 或 WebP 图片：第 1 张为首帧，第 2 张为尾帧；支持公网 URL 或 Data URL。");
-}
-const rawSeed =`;
-    return script
-      .replace(firstLastMarker, `${firstLastMarker}\n// AutoDL MiniMax H3 first-and-last-frame template v1.2.0.`)
-      .replace(/const frameUrls = [\s\S]*?const rawSeed =/, frames);
+if (!validFrame(firstFrame) || !validFrame(lastFrame)) throw new Error("首尾帧模板需要按顺序连接两张 JPG、PNG 或 WebP 图片：第 1 张为首帧，第 2 张为尾帧；支持公网 URL 或 Data URL。");
+`;
+      return withSeed
+        .replace(firstLastMarker, `${firstLastMarker}\n// ${seedMarker}`)
+        .replace(/const frameUrls = [\s\S]*?const rawSeed =[^\n]*\n(?:if [^\n]*\n)?/, frames)
+        .replace(/const rawSeed =[^\n]*\n(?:if [^\n]*\n)?/, "")
+        .replace(/\.\.\.\(rawSeed[^\n]*\n/, "    seed,\n");
+    }
+    if (script.includes("AutoDL ComfyUI video API") || script.includes("AutoDL ComfyUI text-to-video API")) return withSeed
+      .replace(/seed: Number\.isInteger\(Number\(params\.seed\)\) \? Number\(params\.seed\) : undefined/, "seed")
+      .replace(/data: \{\n    prompt:/, "data: {\n    seed,\n    prompt:");
+    return script;
   };
   return {
     id: "autodl-comfyui",
     name: "AutoDL ComfyUI",
-    version: "1.2.0",
+    version: "1.3.0",
     description: "为模型脚本编辑器提供 AutoDL ComfyUI 视频模板、专属参数和媒体代理。",
     autoEnable: true,
     nodes: [],
@@ -59,6 +72,10 @@ const proxyAutoDlVideo = (url) => {
   }
 };
 const headers = { "Content-Type": "application/json", Authorization: \`Bearer \${apiKey}\` };
+// AutoDL ComfyUI seed handling v1.3.0.
+const normalizedSeed = String(params.seed || "random").trim();
+if (normalizedSeed !== "random" && !/^[1-9]\\d*$/.test(normalizedSeed)) throw new Error("固定 Seed 必须是大于 0 的整数。");
+const seed = /^[1-9]\\d*$/.test(normalizedSeed) ? Number(normalizedSeed) : Math.floor(Math.random() * 2147483647) + 1;
 // AutoDL supports only 480/768/1080p in horizontal or vertical orientation.
 // The canvas's generic 720p setting maps to AutoDL's 768p; square and auto map to vertical.
 const autoDlVideoSettings = (params) => {
@@ -66,7 +83,7 @@ const autoDlVideoSettings = (params) => {
   const resolutionMatch = requestedResolution.match(/(?:^|\\D)(480|768|1080)(?:\\D|$)/);
   const resolutionNumber = resolutionMatch ? resolutionMatch[1] : requestedResolution.includes("480") ? "480" : requestedResolution.includes("1080") ? "1080" : "768";
   const ratio = String(params.ratio || params.size || "");
-  const ratioMatch = ratio.match(/(\\d+)\\s*[:x]\\s*(\\d+)/i);
+  const ratioMatch = ratio.match(/(\\\d+)\\s*[:x]\\s*(\\\d+)/i);
   const orientation = ratioMatch && Number(ratioMatch[1]) > Number(ratioMatch[2]) ? "横" : "竖";
   const requestedDuration = Number(params.seconds);
   const duration = Number.isFinite(requestedDuration) ? Math.max(1, Math.min(10, Math.round(requestedDuration))) : 5;
@@ -74,7 +91,7 @@ const autoDlVideoSettings = (params) => {
 };
 const { duration, resolution } = autoDlVideoSettings(params);
 const body = {
-  seed: Number.isInteger(Number(params.seed)) ? Number(params.seed) : undefined,
+  seed,
   prompt: String(prompt || "").slice(0, 10000),
   duration,
   resolution,
@@ -129,6 +146,10 @@ const proxyAutoDlVideo = (url) => {
   }
 };
 const headers = { "Content-Type": "application/json", Authorization: \`Bearer \${apiKey}\` };
+// AutoDL ComfyUI seed handling v1.3.0.
+const normalizedSeed = String(params.seed || "random").trim();
+if (normalizedSeed !== "random" && !/^[1-9]\\d*$/.test(normalizedSeed)) throw new Error("固定 Seed 必须是大于 0 的整数。");
+const seed = /^[1-9]\\d*$/.test(normalizedSeed) ? Number(normalizedSeed) : Math.floor(Math.random() * 2147483647) + 1;
 // AutoDL supports only 480/768/1080p in horizontal or vertical orientation.
 // The canvas's generic 720p setting maps to AutoDL's 768p; square and auto map to vertical.
 const autoDlVideoSettings = (params) => {
@@ -136,7 +157,7 @@ const autoDlVideoSettings = (params) => {
   const resolutionMatch = requestedResolution.match(/(?:^|\\D)(480|768|1080)(?:\\D|$)/);
   const resolutionNumber = resolutionMatch ? resolutionMatch[1] : requestedResolution.includes("480") ? "480" : requestedResolution.includes("1080") ? "1080" : "768";
   const ratio = String(params.ratio || params.size || "");
-  const ratioMatch = ratio.match(/(\\d+)\\s*[:x]\\s*(\\d+)/i);
+  const ratioMatch = ratio.match(/(\\\d+)\\s*[:x]\\s*(\\\d+)/i);
   const orientation = ratioMatch && Number(ratioMatch[1]) > Number(ratioMatch[2]) ? "横" : "竖";
   const requestedDuration = Number(params.seconds);
   const duration = Number.isFinite(requestedDuration) ? Math.max(1, Math.min(10, Math.round(requestedDuration))) : 5;
@@ -148,6 +169,7 @@ const created = await request({
   url: \`\${root}/api/v1/comfyui/comfyui_workflow/\${encodeURIComponent(model)}\`,
   headers,
   data: {
+    seed,
     prompt: String(prompt || "").slice(0, 10000),
     duration,
     resolution,
@@ -175,7 +197,7 @@ return await poll(
   { intervalMs: 3000, timeoutMs: 600000 },
 );` },
         { label: "AutoDL ComfyUI（MiniMax H3 首尾帧视频）", script: `// AutoDL ComfyUI MiniMax H3 first-and-last-frame video API.
-// AutoDL MiniMax H3 first-and-last-frame template v1.2.0.
+// AutoDL ComfyUI seed handling v1.3.0.
 // This template uses /api/v1/comfyui/comfyui_workflow/minimax_h3_b99_002.
 // Connect exactly two images in order: first frame, then last frame. Public URLs are preferred; Data URLs are supported.
 const root = baseUrl.trim().replace(/\\/+$/, "").replace(/\\/api$/i, "");
@@ -186,6 +208,10 @@ const proxyAutoDlVideo = (url) => {
   } catch { return url; }
 };
 const headers = { "Content-Type": "application/json", Authorization: \`Bearer \${apiKey}\` };
+// AutoDL ComfyUI seed handling v1.3.0.
+const normalizedSeed = String(params.seed || "random").trim();
+if (normalizedSeed !== "random" && !/^[1-9]\\d*$/.test(normalizedSeed)) throw new Error("固定 Seed 必须是大于 0 的整数。");
+const seed = /^[1-9]\\d*$/.test(normalizedSeed) ? Number(normalizedSeed) : Math.floor(Math.random() * 2147483647) + 1;
 const imageUrls = Array.isArray(params.refImageUrls) ? params.refImageUrls : [];
 const imageDataUrls = Array.isArray(params.refImagesDataUrls) ? params.refImagesDataUrls : images;
 const frameSource = (index) => String(imageUrls[index] || imageDataUrls[index] || "").replace(/\\s/g, "");
@@ -195,8 +221,6 @@ const validFrame = (value) => /^https?:\\/\\//i.test(value) || /^data:image\\/(?
 if (!validFrame(firstFrame) || !validFrame(lastFrame)) {
   throw new Error("首尾帧模板需要按顺序连接两张 JPG、PNG 或 WebP 图片：第 1 张为首帧，第 2 张为尾帧；支持公网 URL 或 Data URL。");
 }
-const rawSeed = String(params.seed || "").trim();
-if (rawSeed && !/^-?\\d+$/.test(rawSeed)) throw new Error("随机种子必须是整数，或留空使用随机结果。");
 const requestedResolution = String(params.resolution || "").trim();
 const resolution = ["736p竖", "736p横", "736p(1:1)"].includes(requestedResolution) ? requestedResolution : "736p竖";
 const requestedDuration = Math.round(Number(params.seconds));
@@ -206,7 +230,7 @@ const created = await request({
   url: \`\${root}/api/v1/comfyui/comfyui_workflow/minimax_h3_b99_002\`,
   headers,
   data: {
-    ...(rawSeed ? { seed: Number(rawSeed) } : {}),
+    seed,
     prompt: String(prompt || "").slice(0, 10000),
     duration,
     last_frame: lastFrame,

@@ -10,7 +10,7 @@ export default function createCompShareMiniMaxH3Plugin() {
   };
   const normalizeSize = (value) => ratios.includes(value) ? value : "16:9";
   const marker = "CompShare MiniMax H3 video API";
-  const versionMarker = "CompShare MiniMax H3 plugin v1.3.0";
+  const versionMarker = "CompShare MiniMax H3 plugin v1.4.0";
   const template = `// ${marker}.
 // ${versionMarker}
 // Base URL: https://cp.compshare.cn
@@ -65,6 +65,9 @@ const ratio = allowedRatios.includes(String(params.ratio)) ? String(params.ratio
 const duration = Math.max(4, Math.min(30, Math.round(Number(params.seconds) || 5)));
 const useContextIr = params.useContextIr === true;
 const skillId = String(params.skillId || "").trim();
+const normalizedSeed = String(params.seed || "").trim();
+if (normalizedSeed !== "random" && normalizedSeed && !/^[1-9]\\d*$/.test(normalizedSeed)) throw new Error("固定 Seed 必须是大于 0 的整数。");
+const seed = /^[1-9]\\d*$/.test(normalizedSeed) ? Number(normalizedSeed) : Math.floor(Math.random() * 2147483647) + 1;
 const created = await call({
   method: "post",
   url: root + "/minimax/v2/video_generation",
@@ -75,6 +78,7 @@ const created = await call({
     resolution,
     duration,
     ratio,
+    seed,
     use_context_ir: useContextIr,
     ...(skillId && useContextIr ? { skill_id: skillId } : {}),
     mute_audio: params.generateAudio === false,
@@ -117,7 +121,7 @@ return await poll(
   return {
     id: "comp-share-minimax-h3",
     name: "优云智算 MiniMax H3",
-    version: "1.3.0",
+    version: "1.4.0",
     description: "为模型脚本编辑器提供优云智算 MiniMax H3 视频 API 模板和专属配置项。",
     autoEnable: true,
     nodes: [],
@@ -130,7 +134,7 @@ return await poll(
         resolutions: [{ value: "768", label: "768P" }, { value: "1080", label: "1080P" }, { value: "2K", label: "2K" }],
         seconds: [4, 5, 10, 15, 20, 30], minSeconds: 4, maxSeconds: 30,
         sizeMode: "ratios", ratios, allowCustomResolution: false,
-        outputFields: ["generateAudio", "watermark", "contextIr"], skillId: true,
+        outputFields: ["generateAudio", "watermark", "contextIr"], skillId: true, seed: true,
         normalizeResolution, normalizeSeconds, normalizeSize,
         resolutionLabel: (value) => `${normalizeResolution(value)}${normalizeResolution(value) === "2K" ? "" : "P"}`,
       },
