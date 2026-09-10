@@ -16,16 +16,34 @@ export default function createAutoDlComfyUiPlugin() {
       return target.hostname === "codewithgpu-image-1310972338.cos.ap-beijing.myqcloud.com" ? `/autodl-media${target.pathname}${target.search}${target.hash}` : url;
     } catch { return url; }
   };
+  const firstLastMarker = "AutoDL ComfyUI MiniMax H3 first-and-last-frame video API.";
+  const upgradeFirstLastTemplate = (script) => {
+    if (!script.includes(firstLastMarker) || script.includes("AutoDL MiniMax H3 first-and-last-frame template v1.2.0.")) return script;
+    const frames = String.raw`const imageUrls = Array.isArray(params.refImageUrls) ? params.refImageUrls : [];
+const imageDataUrls = Array.isArray(params.refImagesDataUrls) ? params.refImagesDataUrls : images;
+const frameSource = (index) => String(imageUrls[index] || imageDataUrls[index] || "").replace(/\s/g, "");
+const firstFrame = frameSource(0);
+const lastFrame = frameSource(1);
+const validFrame = (value) => /^https?:\/\//i.test(value) || /^data:image\/(?:png|jpe?g|webp);base64,/i.test(value);
+if (!validFrame(firstFrame) || !validFrame(lastFrame)) {
+  throw new Error("首尾帧模板需要按顺序连接两张 JPG、PNG 或 WebP 图片：第 1 张为首帧，第 2 张为尾帧；支持公网 URL 或 Data URL。");
+}
+const rawSeed =`;
+    return script
+      .replace(firstLastMarker, `${firstLastMarker}\n// AutoDL MiniMax H3 first-and-last-frame template v1.2.0.`)
+      .replace(/const frameUrls = [\s\S]*?const rawSeed =/, frames);
+  };
   return {
     id: "autodl-comfyui",
     name: "AutoDL ComfyUI",
-    version: "1.1.0",
+    version: "1.2.0",
     description: "为模型脚本编辑器提供 AutoDL ComfyUI 视频模板、专属参数和媒体代理。",
     autoEnable: true,
     nodes: [],
     modelPlugins: [{
       id: "autodl-comfyui",
       marker: "AutoDL ComfyUI",
+      migrateScript: upgradeFirstLastTemplate,
       transformMediaUrl,
       templates: [
         { label: "AutoDL ComfyUI（参考图）", script: `// AutoDL ComfyUI video API: submit a task, then poll until it completes.
@@ -157,8 +175,9 @@ return await poll(
   { intervalMs: 3000, timeoutMs: 600000 },
 );` },
         { label: "AutoDL ComfyUI（MiniMax H3 首尾帧视频）", script: `// AutoDL ComfyUI MiniMax H3 first-and-last-frame video API.
+// AutoDL MiniMax H3 first-and-last-frame template v1.2.0.
 // This template uses /api/v1/comfyui/comfyui_workflow/minimax_h3_b99_002.
-// Connect exactly two publicly reachable image URLs in order: first frame, then last frame.
+// Connect exactly two images in order: first frame, then last frame. Public URLs are preferred; Data URLs are supported.
 const root = baseUrl.trim().replace(/\\/+$/, "").replace(/\\/api$/i, "");
 const proxyAutoDlVideo = (url) => {
   try {
@@ -167,11 +186,14 @@ const proxyAutoDlVideo = (url) => {
   } catch { return url; }
 };
 const headers = { "Content-Type": "application/json", Authorization: \`Bearer \${apiKey}\` };
-const frameUrls = Array.isArray(params.refImageUrls) ? params.refImageUrls : [];
-const firstFrame = String(frameUrls[0] || "").trim();
-const lastFrame = String(frameUrls[1] || "").trim();
-if (!/^https?:\\/\\//i.test(firstFrame) || !/^https?:\\/\\//i.test(lastFrame)) {
-  throw new Error("首尾帧模板需要按顺序连接两张可公网访问的图片 URL：第 1 张为首帧，第 2 张为尾帧。");
+const imageUrls = Array.isArray(params.refImageUrls) ? params.refImageUrls : [];
+const imageDataUrls = Array.isArray(params.refImagesDataUrls) ? params.refImagesDataUrls : images;
+const frameSource = (index) => String(imageUrls[index] || imageDataUrls[index] || "").replace(/\\s/g, "");
+const firstFrame = frameSource(0);
+const lastFrame = frameSource(1);
+const validFrame = (value) => /^https?:\\/\\//i.test(value) || /^data:image\\/(?:png|jpe?g|webp);base64,/i.test(value);
+if (!validFrame(firstFrame) || !validFrame(lastFrame)) {
+  throw new Error("首尾帧模板需要按顺序连接两张 JPG、PNG 或 WebP 图片：第 1 张为首帧，第 2 张为尾帧；支持公网 URL 或 Data URL。");
 }
 const rawSeed = String(params.seed || "").trim();
 if (rawSeed && !/^-?\\d+$/.test(rawSeed)) throw new Error("随机种子必须是整数，或留空使用随机结果。");
