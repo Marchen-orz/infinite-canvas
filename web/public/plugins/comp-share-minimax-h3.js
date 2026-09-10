@@ -10,7 +10,7 @@ export default function createCompShareMiniMaxH3Plugin() {
   };
   const normalizeSize = (value) => ratios.includes(value) ? value : "16:9";
   const marker = "CompShare MiniMax H3 video API";
-  const versionMarker = "CompShare MiniMax H3 plugin v1.2.0";
+  const versionMarker = "CompShare MiniMax H3 plugin v1.3.0";
   const template = `// ${marker}.
 // ${versionMarker}
 // Base URL: https://cp.compshare.cn
@@ -88,6 +88,14 @@ if (!taskId) {
   const preview = (() => { try { return JSON.stringify(payload).slice(0, 500); } catch { return String(payload); } })();
   throw new Error(detail || "优云智算未返回 task_id：" + (preview || "空响应"));
 }
+// The canvas abort signal means the user pressed “停止生成”. Use a detached
+// request because ordinary request() correctly inherits that already-aborted signal.
+const cancelTask = () => requestDetached({
+  method: "delete",
+  url: root + "/minimax/v2/video_generation/" + encodeURIComponent(taskId),
+  headers: { Authorization: "Bearer " + apiKey, Accept: "application/json" },
+}).catch(() => undefined);
+signal?.addEventListener("abort", cancelTask, { once: true });
 return await poll(
   () => call({ method: "get", url: root + "/minimax/v2/query/video_generation/" + encodeURIComponent(taskId), headers }),
   (response) => {
@@ -109,7 +117,7 @@ return await poll(
   return {
     id: "comp-share-minimax-h3",
     name: "优云智算 MiniMax H3",
-    version: "1.2.0",
+    version: "1.3.0",
     description: "为模型脚本编辑器提供优云智算 MiniMax H3 视频 API 模板和专属配置项。",
     autoEnable: true,
     nodes: [],

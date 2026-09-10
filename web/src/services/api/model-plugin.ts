@@ -111,13 +111,16 @@ function createPoll(signal?: AbortSignal) {
  * Run a user-authored model call script as an async function body with flat locals (see PLUGIN_VARIABLES):
  *   prompt / images / audios / messages / params — request input
  *   model / baseUrl / apiKey / systemPrompt / reasoningEffort     — current channel and text settings
- *   http / request / poll / sleep / signal / onDelta    — request helpers
+ *   http / request / requestDetached / poll / sleep / signal / onDelta — request helpers
  * The script must `return` the result; each caller normalizes it to its capability's shape.
  */
 export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<T> {
     const { config } = args;
     const http = createPluginHttp(config, { signal: args.signal });
     const request = createPluginRequest(config, { signal: args.signal });
+    // Detached requests deliberately do not inherit the generation signal. They are only
+    // for a provider's cleanup/cancellation endpoint after the user has stopped a task.
+    const requestDetached = createPluginRequest(config);
     const poll = createPoll(args.signal);
     const runner = new Function(
         "prompt",
@@ -132,6 +135,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
         "reasoningEffort",
         "http",
         "request",
+        "requestDetached",
         "poll",
         "sleep",
         "signal",
@@ -153,6 +157,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
             config.reasoningEffort,
             http,
             request,
+            requestDetached,
             poll,
             (ms: number) => sleep(ms, args.signal),
             args.signal,
@@ -185,6 +190,7 @@ export function getPluginVariables(): PluginVariable[] {
         { name: "reasoningEffort", type: '"auto" | "low" | "medium" | "high" | "xhigh"', desc: i18n.t("modelPlugin.variables.reasoningEffort"), capabilities: ["text"] },
         { name: "http", type: "object", desc: i18n.t("modelPlugin.variables.http") },
         { name: "request", type: "function", desc: i18n.t("modelPlugin.variables.request") },
+        { name: "requestDetached", type: "function", desc: "不受停止信号影响的请求，仅用于调用服务商的任务取消接口" },
         { name: "poll", type: "function", desc: i18n.t("modelPlugin.variables.poll") },
         { name: "sleep", type: "function", desc: i18n.t("modelPlugin.variables.sleep") },
         { name: "signal", type: "AbortSignal", desc: i18n.t("modelPlugin.variables.signal") },
