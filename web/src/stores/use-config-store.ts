@@ -50,6 +50,7 @@ export type AiConfig = {
     videoMode: string;
     videoUseContextIr: string;
     videoSkillId: string;
+    videoSeed: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -123,6 +124,7 @@ export const defaultConfig: AiConfig = {
     videoMode: "frames",
     videoUseContextIr: "false",
     videoSkillId: "",
+    videoSeed: "",
     systemPrompt: "",
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
@@ -289,6 +291,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoMode: config.videoMode === "reference" ? "reference" : "frames",
                         videoUseContextIr: config.videoUseContextIr || "false",
                         videoSkillId: config.videoSkillId || "",
+                        videoSeed: config.videoSeed || "",
                         canvasImageCount: config.canvasImageCount || "3",
                         negativePrompt: config.negativePrompt || "",
                         denoise: config.denoise || "0.75",

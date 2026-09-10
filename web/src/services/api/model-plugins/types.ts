@@ -10,6 +10,7 @@ export type VideoPluginSettings = {
     allowCustomResolution: boolean;
     outputFields?: Array<"generateAudio" | "watermark" | "contextIr">;
     skillId?: boolean;
+    seed?: boolean;
     normalizeResolution: (value: string) => string;
     normalizeSeconds: (value: string) => string;
     normalizeSize: (value: string) => string;

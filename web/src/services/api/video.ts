@@ -100,6 +100,7 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
                 watermark: boolConfig(config.videoWatermark, false),
                 useContextIr: boolConfig(config.videoUseContextIr, false),
                 skillId: config.videoSkillId.trim(),
+                seed: config.videoSeed.trim(),
             },
             signal: options?.signal,
         }),

@@ -111,6 +111,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
         videoUseContextIr: node?.metadata?.useContextIr || config.videoUseContextIr || defaultConfig.videoUseContextIr,
         videoSkillId: node?.metadata?.skillId || config.videoSkillId || defaultConfig.videoSkillId,
+        videoSeed: node?.metadata?.seed || config.videoSeed || defaultConfig.videoSeed,
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,

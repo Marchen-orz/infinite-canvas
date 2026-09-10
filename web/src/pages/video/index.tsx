@@ -60,7 +60,7 @@ type GenerationLog = {
     error?: string;
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoUseContextIr" | "videoSkillId">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoUseContextIr" | "videoSkillId" | "videoSeed">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -737,6 +737,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         videoWatermark: log.config?.videoWatermark || "false",
         videoUseContextIr: log.config?.videoUseContextIr || "false",
         videoSkillId: log.config?.videoSkillId || "",
+        videoSeed: log.config?.videoSeed || "",
     };
 }
 
@@ -751,6 +752,7 @@ function buildLog({ prompt, model, config, references, durationMs, status, task,
         videoWatermark: config.videoWatermark,
         videoUseContextIr: config.videoUseContextIr,
         videoSkillId: config.videoSkillId,
+        videoSeed: config.videoSeed,
     };
     return {
         id: nanoid(),
@@ -785,6 +787,7 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
         videoUseContextIr: String(boolConfig(config.videoUseContextIr, false)),
         videoSkillId: config.videoSkillId,
+        videoSeed: config.videoSeed,
     };
 }
 

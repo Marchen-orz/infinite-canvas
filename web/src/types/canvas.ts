@@ -72,6 +72,7 @@ export type CanvasNodeMetadata = {
     watermark?: string;
     useContextIr?: string;
     skillId?: string;
+    seed?: string;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;

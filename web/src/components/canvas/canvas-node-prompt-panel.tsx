@@ -185,6 +185,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         videoUseContextIr: node.metadata?.useContextIr || globalConfig.videoUseContextIr || defaultConfig.videoUseContextIr,
         videoSkillId: node.metadata?.skillId || globalConfig.videoSkillId || defaultConfig.videoSkillId,
+        videoSeed: node.metadata?.seed || globalConfig.videoSeed || defaultConfig.videoSeed,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
@@ -199,6 +200,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoWatermark") return { watermark: value };
     if (key === "videoUseContextIr") return { useContextIr: value };
     if (key === "videoSkillId") return { skillId: value };
+    if (key === "videoSeed") return { seed: value };
     return { [key]: value };
 }
 

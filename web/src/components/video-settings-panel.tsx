@@ -29,7 +29,7 @@ export const videoSecondsRange = { min: 4, max: 30 };
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoUseContextIr" | "videoSkillId", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoUseContextIr" | "videoSkillId" | "videoSeed", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -122,6 +122,11 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         {pluginSettings?.skillId && config.videoUseContextIr === "true" ? (
                             <SettingGroup title={t("settingsPanels.video.skillId")} color={theme.node.muted}>
                                 <input className="h-9 w-full rounded-xl border bg-transparent px-3 text-sm outline-none" style={{ borderColor: theme.node.stroke, color: theme.node.text }} value={config.videoSkillId} placeholder="skill-019xxxxx" onChange={(event) => onConfigChange("videoSkillId", event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+                            </SettingGroup>
+                        ) : null}
+                        {pluginSettings?.seed ? (
+                            <SettingGroup title="随机种子" color={theme.node.muted}>
+                                <input inputMode="numeric" className="h-9 w-full rounded-xl border bg-transparent px-3 text-sm outline-none" style={{ borderColor: theme.node.stroke, color: theme.node.text }} value={config.videoSeed} placeholder="选填，整数；留空为随机" onChange={(event) => onConfigChange("videoSeed", event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
                             </SettingGroup>
                         ) : null}
                     </>
